@@ -1,0 +1,3 @@
+﻿# Цей файл вказує Railway, які інструменти використовувати
+[phases.setup]
+nixPkgs = ["dotnet-sdk_8"]
