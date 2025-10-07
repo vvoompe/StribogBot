@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
 using Telegram.Bot;
+using Telegram.Bot.Types.Enums; // Додано для прямого доступу до ParseMode
 
 namespace Stribog
 {
@@ -12,7 +13,6 @@ namespace Stribog
     {
         private readonly string _filePath;
         private Dictionary<long, UserSetting> _userSettings;
-        // Змінено на словник, щоб ефективно відстежувати статус для кожного
         private Dictionary<long, bool> _sentToday = new Dictionary<long, bool>();
 
         public UserSettingsService(string filePath)
@@ -70,35 +70,29 @@ namespace Stribog
             _userSettings.TryGetValue(chatId, out var settings);
             return Task.FromResult(settings);
         }
-
-        // *** ПОВНІСТЮ ПЕРЕПИСАНА ЛОГІКА РОЗСИЛКИ ДЛЯ НАДІЙНОСТІ ***
+        
         public async Task CheckAndSendNotifications(ITelegramBotClient botClient, WeatherService weatherService)
         {
             var nowUtc = DateTime.UtcNow;
 
-            // Раз на добу (опівночі за UTC) очищуємо список тих, кому вже надіслали
             if (nowUtc.Hour == 0 && nowUtc.Minute == 0)
             {
                 _sentToday.Clear();
                 Console.WriteLine($"[INFO] Нова доба. Список сповіщень очищено.");
             }
 
-            // Перебираємо всіх користувачів з налаштуваннями
             foreach (var userEntry in _userSettings)
             {
                 var userId = userEntry.Key;
                 var userSetting = userEntry.Value;
 
-                // Пропускаємо, якщо у користувача неповні дані або вже отримав розсилку
                 if (userSetting.City == null || _sentToday.ContainsKey(userId))
                 {
                     continue;
                 }
 
-                // Вираховуємо поточний час для конкретного користувача
                 var userLocalTime = nowUtc.AddSeconds(userSetting.UtcOffsetSeconds);
                 
-                // *** ОСНОВНА ПЕРЕВІРКА ***
                 if (userLocalTime.Hour == userSetting.NotificationTime.Hours &&
                     userLocalTime.Minute == userSetting.NotificationTime.Minutes)
                 {
@@ -109,8 +103,9 @@ namespace Stribog
                         var weatherReport = await weatherService.GetCurrentWeatherAsync(userSetting.City);
                         if (!weatherReport.StartsWith("Помилка"))
                         {
-                            await botClient.SendTextMessageAsync(userId, weatherReport, parseMode: Telegram.Bot.Types.Enums.ParseMode.Markdown);
-                            _sentToday[userId] = true; // Позначаємо, що сьогодні вже надіслали
+                            // *** ВИПРАВЛЕННЯ: Змінено на MarkdownV2 ***
+                            await botClient.SendTextMessageAsync(userId, weatherReport, parseMode: ParseMode.MarkdownV2);
+                            _sentToday[userId] = true;
                             Console.WriteLine($"[SUCCESS] Сповіщення для {userId} надіслано успішно.");
                         }
                         else
@@ -135,7 +130,8 @@ namespace Stribog
             {
                 try
                 {
-                    await botClient.SendTextMessageAsync(userId, message, parseMode: Telegram.Bot.Types.Enums.ParseMode.Markdown);
+                    // *** ВИПРАВЛЕННЯ: Змінено на MarkdownV2 ***
+                    await botClient.SendTextMessageAsync(userId, message, parseMode: ParseMode.MarkdownV2);
                     successfulSends++;
                     await Task.Delay(100);
                 }
