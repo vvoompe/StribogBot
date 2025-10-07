@@ -20,102 +20,96 @@ namespace Stribog
 
         public async Task<string> GetCurrentWeatherAsync(string city)
         {
-            // Спочатку отримуємо координати міста
-            var geoUrl = $"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={_apiKey}&units=metric&lang=ua";
             try
             {
-                var geoResponse = await _httpClient.GetStringAsync(geoUrl);
-                var geoJson = JObject.Parse(geoResponse);
-                if (geoJson["cod"]?.ToString() != "200") return "Не вдалося знайти місто. Перевірте назву.";
+                // ЗАПИТ 1: Отримуємо поточні дані (температура, схід/захід сонця і т.д.)
+                var weatherUrl = $"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={_apiKey}&units=metric&lang=ua";
+                var weatherResponse = await _httpClient.GetStringAsync(weatherUrl);
+                var weatherJson = JObject.Parse(weatherResponse);
+                if (weatherJson["cod"]?.ToString() != "200") return "Не вдалося знайти місто. Перевірте назву.";
 
-                var lat = geoJson["coord"]["lat"].Value<double>();
-                var lon = geoJson["coord"]["lon"].Value<double>();
-                var cityName = geoJson["name"].ToString();
-                var country = geoJson["sys"]["country"].ToString();
+                // ЗАПИТ 2: Отримуємо погодинний та денний прогноз (для дощу та мін/макс температури)
+                var forecastUrl = $"https://api.openweathermap.org/data/2.5/forecast?q={city}&appid={_apiKey}&units=metric&lang=ua";
+                var forecastResponse = await _httpClient.GetStringAsync(forecastUrl);
+                var forecastJson = JObject.Parse(forecastResponse);
 
-                // Тепер робимо один запит для отримання всіх даних
-                var oneCallUrl = $"https://api.openweathermap.org/data/2.5/onecall?lat={lat}&lon={lon}&appid={_apiKey}&units=metric&lang=ua&exclude=minutely,alerts";
-                var oneCallResponse = await _httpClient.GetStringAsync(oneCallUrl);
-                var json = JObject.Parse(oneCallResponse);
-                
-                return FormatWeatherReport(json, cityName, country);
+                return FormatWeatherReport(weatherJson, forecastJson);
             }
             catch
             {
-                return "Помилка при отриманні погоди.";
+                // Ця помилка тепер буде виникати значно рідше
+                return "Помилка при отриманні погоди. Можливо, невірна назва міста.";
             }
         }
-        
-        // *** ЗМІНА: Метод форматування тепер приймає дані з OneCall API ***
-        private string FormatWeatherReport(JObject json, string cityName, string country)
-        {
-            var current = json["current"];
-            var todayDaily = json["daily"][0];
-            
-            var sb = new StringBuilder();
-            var dt = DateTimeOffset.FromUnixTimeSeconds(current["dt"].Value<long>()).LocalDateTime;
 
-            sb.AppendLine($"*{cityName}, {country}*");
+        private string FormatWeatherReport(JObject weatherJson, JObject forecastJson)
+        {
+            var sb = new StringBuilder();
+            var dt = DateTimeOffset.FromUnixTimeSeconds(weatherJson["dt"].Value<long>()).LocalDateTime;
+
+            sb.AppendLine($"*{weatherJson["name"]}, {weatherJson["sys"]["country"]}*");
             sb.AppendLine($"_{dt:dd MMMM, dddd}_");
             sb.AppendLine();
 
-            var description = current["weather"][0]["description"].ToString();
+            var description = weatherJson["weather"][0]["description"].ToString();
             description = char.ToUpper(description[0]) + description.Substring(1);
-            var icon = GetWeatherIcon(current["weather"][0]["main"].ToString());
-            var temp = current["temp"].Value<double>();
+            var icon = GetWeatherIcon(weatherJson["weather"][0]["main"].ToString());
+            var temp = weatherJson["main"]["temp"].Value<double>();
 
             sb.AppendLine($"{description} {icon}");
             sb.AppendLine($"🌡️ *{temp:+#;-#;0}°C*");
-            sb.AppendLine($"Відчувається як: *{current["feels_like"].Value<double>():+#;-#;0}°C*");
+            sb.AppendLine($"Відчувається як: *{weatherJson["main"]["feels_like"].Value<double>():+#;-#;0}°C*");
             sb.AppendLine("`------------------------------`");
-            
-            // *** ДОДАНО: Прогноз дощу та поради ***
-            string rainInfo = GetRainInfo(json["hourly"]);
+
+            // --- Прогноз дощу та поради з даних 5-денного прогнозу ---
+            var hourlyForecasts = forecastJson["list"];
+            string rainInfo = GetRainInfo(hourlyForecasts);
             if (!string.IsNullOrEmpty(rainInfo))
             {
                 sb.AppendLine(rainInfo);
             }
-            string advice = GetWeatherAdvice(current["weather"][0]["main"].ToString(), temp, todayDaily["uvi"]?.Value<double>() ?? 0);
+            string advice = GetWeatherAdvice(weatherJson["weather"][0]["main"].ToString(), temp);
             if (!string.IsNullOrEmpty(advice))
             {
                 sb.AppendLine(advice);
                 sb.AppendLine("`------------------------------`");
             }
             
-            sb.AppendLine($"Макс.: *{todayDaily["temp"]["max"].Value<double>():+#;-#;0}°*, мін.: *{todayDaily["temp"]["min"].Value<double>():+#;-#;0}°*");
-            sb.AppendLine($"Вітер: *{GetWindDirection(current["wind_deg"].Value<double>())} {current["wind_speed"]} м/с*");
-            sb.AppendLine($"Вологість: *{current["humidity"]}%*");
-            sb.AppendLine($"Тиск: *{current["pressure"]} hPa*");
+            // --- Мін/макс температура на сьогодні ---
+            var todayForecasts = hourlyForecasts.Where(f => DateTimeOffset.FromUnixTimeSeconds(f["dt"].Value<long>()).LocalDateTime.Date == DateTime.Today);
+            var minTemp = todayForecasts.Any() ? todayForecasts.Min(f => f["main"]["temp_min"].Value<double>()) : weatherJson["main"]["temp_min"].Value<double>();
+            var maxTemp = todayForecasts.Any() ? todayForecasts.Max(f => f["main"]["temp_max"].Value<double>()) : weatherJson["main"]["temp_max"].Value<double>();
+            
+            sb.AppendLine($"Макс.: *{maxTemp:+#;-#;0}°*, мін.: *{minTemp:+#;-#;0}°*");
+            sb.AppendLine($"Вітер: *{GetWindDirection(weatherJson["wind"]["deg"].Value<double>())} {weatherJson["wind"]["speed"]} м/с*");
+            sb.AppendLine($"Вологість: *{weatherJson["main"]["humidity"]}%*");
+            sb.AppendLine($"Тиск: *{weatherJson["main"]["pressure"]} hPa*");
 
-            var sunrise = DateTimeOffset.FromUnixTimeSeconds(current["sunrise"].Value<long>()).LocalDateTime;
-            var sunset = DateTimeOffset.FromUnixTimeSeconds(current["sunset"].Value<long>()).LocalDateTime;
+            var sunrise = DateTimeOffset.FromUnixTimeSeconds(weatherJson["sys"]["sunrise"].Value<long>()).LocalDateTime;
+            var sunset = DateTimeOffset.FromUnixTimeSeconds(weatherJson["sys"]["sunset"].Value<long>()).LocalDateTime;
             sb.AppendLine($"Схід: *{sunrise:HH:mm}*");
             sb.AppendLine($"Захід: *{sunset:HH:mm}*");
 
             return sb.ToString();
         }
-
-        // *** ДОДАНО: Нові/оновлені методи ***
+        
         private string GetRainInfo(JToken hourly)
         {
-            var rainHours = hourly?
-                .Take(12) // Перевіряємо наступні 12 годин
+            var rainSlots = hourly?
+                .Take(8) // Перевіряємо наступні 24 години (8 слотів по 3 години)
                 .Where(h => h["weather"][0]["main"].ToString() == "Rain")
                 .Select(h => DateTimeOffset.FromUnixTimeSeconds(h["dt"].Value<long>()).LocalDateTime)
                 .ToList();
 
-            if (rainHours == null || !rainHours.Any()) return "";
+            if (rainSlots == null || !rainSlots.Any()) return "";
             
-            // Простий вивід першого очікуваного дощу
-            return $"🌧 *Очікується дощ*, найближчий о {rainHours.First():HH:mm}.";
+            return $"🌧 *Очікується дощ*, найближчий приблизно о {rainSlots.First():HH:mm}.";
         }
         
-        private string GetWeatherAdvice(string weatherMain, double temp, double uvi)
+        private string GetWeatherAdvice(string weatherMain, double temp)
         {
             if (weatherMain == "Rain" || weatherMain == "Thunderstorm")
                 return "💡 Порада: Не забудьте парасольку! 🌂";
-            if (uvi > 6) // УФ-індекс високий
-                return "💡 Порада: Високий УФ-індекс, краще захиститися від сонця! 🧴";
             if (temp > 28)
                 return "💡 Порада: Спека! Пийте більше води. 💧";
             if (temp < -5)
@@ -124,8 +118,8 @@ namespace Stribog
             return "";
         }
         
-        // ... (решта методів: GetEveningForecastAsync, GetForecastAsync, CityExistsAsync і т.д. без змін) ...
-        public async Task<string> GetEveningForecastAsync(string city)
+        // ... (решта методів: GetEveningForecastAsync, GetForecastAsync, CityExistsAsync і т.д. залишаються без змін) ...
+         public async Task<string> GetEveningForecastAsync(string city)
         {
             var url = $"https://api.openweathermap.org/data/2.5/forecast?q={city}&appid={_apiKey}&units=metric&lang=ua";
             try
@@ -146,8 +140,8 @@ namespace Stribog
                         Description = item["weather"][0]["description"].ToString(),
                         Icon = GetWeatherIcon(item["weather"][0]["main"].ToString())
                     })
-                    .Where(f => f.Date.Date == DateTime.Today && f.Date.Hour > DateTime.Now.Hour)
-                    .Take(8); // Беремо до 8 наступних прогнозів
+                    .Where(f => f.Date.Date == DateTime.Today && f.Date.Hour >= DateTime.Now.Hour)
+                    .Take(8); 
 
                 if (!hourlyForecasts.Any())
                 {
@@ -179,17 +173,19 @@ namespace Stribog
                 
                 var dailyForecasts = json["list"]
                     .GroupBy(item => DateTimeOffset.FromUnixTimeSeconds(item["dt"].Value<long>()).LocalDateTime.Date)
-                    .Select(g => g.OrderBy(i => Math.Abs(i["main"]["temp"].Value<double>())).First()) // Беремо запис з середньою температурою
-                    .Where(f => DateTimeOffset.FromUnixTimeSeconds(f["dt"].Value<long>()).LocalDateTime.Date >= DateTime.Today)
+                    .Select(g => new {
+                        Date = g.Key,
+                        TempMin = g.Min(x => x["main"]["temp"].Value<double>()),
+                        TempMax = g.Max(x => x["main"]["temp"].Value<double>()),
+                        Description = g.First()["weather"][0]["description"].ToString(),
+                        Icon = GetWeatherIcon(g.First()["weather"][0]["main"].ToString())
+                    })
+                    .Where(f => f.Date.Date >= DateTime.Today)
                     .Take(5);
 
                 foreach (var forecast in dailyForecasts)
                 {
-                    var date = DateTimeOffset.FromUnixTimeSeconds(forecast["dt"].Value<long>()).LocalDateTime;
-                    var temp = (int)Math.Round(forecast["main"]["temp"].Value<double>());
-                    var description = forecast["weather"][0]["description"].ToString();
-                    var icon = GetWeatherIcon(forecast["weather"][0]["main"].ToString());
-                    sb.AppendLine($"*{date:dd.MM (ddd)}*: {temp}°C, {description} {icon}");
+                    sb.AppendLine($"*{forecast.Date:dd.MM (ddd)}*: від {Math.Round(forecast.TempMin)}° до {Math.Round(forecast.TempMax)}°, {forecast.Description} {forecast.Icon}");
                 }
                 return sb.ToString();
             }
