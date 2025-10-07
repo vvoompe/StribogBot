@@ -91,12 +91,13 @@ namespace Stribog
 
         private string GetRainInfo(JToken hourly)
         {
-            var rainSlots = hourly?.Take(8)
-                .Where(h => h["weather"][0]["main"].ToString() == "Rain")
+            if (hourly == null) return "";
+            var rainSlots = hourly.Take(8)
+                .Where(h => h["weather"]?[0]?["main"]?.ToString() == "Rain")
                 .Select(h => DateTimeOffset.FromUnixTimeSeconds(h["dt"].Value<long>()).LocalDateTime)
                 .ToList();
 
-            if (rainSlots == null || !rainSlots.Any()) return "";
+            if (!rainSlots.Any()) return "";
             return $"🌧 *Очікується дощ*, найближчий приблизно о {rainSlots.First():HH:mm}.";
         }
 
@@ -110,24 +111,38 @@ namespace Stribog
         
         public async Task<string> GetEveningForecastAsync(string city)
         {
-            var url = $"https://api.openweathermap.org/data/2.5/forecast?q={city}&appid={_apiKey}&units=metric&lang=ua";
-            var response = await _httpClient.GetStringAsync(url);
-            var json = JObject.Parse(response);
-            if (json["cod"]?.ToString() != "200") return "Не вдалося знайти місто.";
+            try
+            {
+                var url = $"https://api.openweathermap.org/data/2.5/forecast?q={city}&appid={_apiKey}&units=metric&lang=ua";
+                var response = await _httpClient.GetStringAsync(url);
+                var json = JObject.Parse(response);
+                if (json["cod"]?.ToString() != "200") return "Не вдалося знайти місто.";
+                
+                // *** ВИПРАВЛЕННЯ: Додано перевірку на наявність даних ***
+                if (json["list"] == null || !json["list"].Any())
+                {
+                    return $"*Прогноз для м. {json["city"]?["name"]}*\n\nНа жаль, погодинний прогноз на сьогодні недоступний.";
+                }
 
-            var sb = new StringBuilder($"*Погодинний прогноз для м. {json["city"]["name"]} до кінця дня:*\n\n");
-            var forecasts = json["list"]
-                .Select(item => new {
-                    Date = DateTimeOffset.FromUnixTimeSeconds(item["dt"].Value<long>()).LocalDateTime,
-                    Temp = (int)Math.Round(item["main"]["temp"].Value<double>()),
-                    Description = item["weather"][0]["description"].ToString(),
-                    Icon = GetWeatherIcon(item["weather"][0]["main"].ToString())
-                })
-                .Where(f => f.Date.Date == DateTime.Today && f.Date.Hour >= DateTime.Now.Hour).Take(8);
+                var sb = new StringBuilder($"*Погодинний прогноз для м. {json["city"]["name"]} до кінця дня:*\n\n");
+                var forecasts = json["list"]
+                    .Select(item => new {
+                        Date = DateTimeOffset.FromUnixTimeSeconds(item["dt"].Value<long>()).LocalDateTime,
+                        Temp = (int)Math.Round(item["main"]["temp"].Value<double>()),
+                        Description = item["weather"][0]["description"].ToString(),
+                        Icon = GetWeatherIcon(item["weather"][0]["main"].ToString())
+                    })
+                    .Where(f => f.Date.Date == DateTime.Today && f.Date.Hour >= DateTime.Now.Hour).Take(8);
 
-            if (!forecasts.Any()) return $"*Прогноз для м. {json["city"]["name"]}*\n\nНа сьогодні більше немає даних.";
-            foreach (var f in forecasts) sb.AppendLine($"`{f.Date:HH:mm}` - {f.Temp}°C, {f.Description} {f.Icon}");
-            return sb.ToString();
+                if (!forecasts.Any()) return $"*Прогноз для м. {json["city"]["name"]}*\n\nНа сьогодні більше немає даних.";
+                foreach (var f in forecasts) sb.AppendLine($"`{f.Date:HH:mm}` - {f.Temp}°C, {f.Description} {f.Icon}");
+                return sb.ToString();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Помилка в GetEveningForecastAsync: {ex.Message}");
+                return "Не вдалося отримати погодинний прогноз.";
+            }
         }
 
         public async Task<string> GetForecastAsync(string city)
