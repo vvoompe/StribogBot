@@ -17,8 +17,19 @@ namespace Stribog
             _apiKey = apiKey;
             _httpClient = new HttpClient();
         }
+        
+        // *** ВИПРАВЛЕННЯ: Зроблено публічним (public), щоб інші класи мали доступ ***
+        public string SanitizeMarkdown(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return "";
+            var charsToEscape = new[] { "_", "*", "[", "]", "(", ")", "~", "`", ">", "#", "+", "-", "=", "|", "{", "}", ".", "!" };
+            foreach (var ch in charsToEscape)
+            {
+                text = text.Replace(ch, "\\" + ch);
+            }
+            return text;
+        }
 
-        // *** НОВИЙ МЕТОД: Отримуємо зміщення часового поясу для міста ***
         public async Task<(bool Success, int OffsetSeconds)> GetTimezoneOffsetAsync(string city)
         {
             try
@@ -38,8 +49,7 @@ namespace Stribog
             }
             return (false, 0);
         }
-        
-        // ... (решта методів: GetCurrentWeatherAsync, FormatWeatherReport і т.д. залишаються без змін)
+
         public async Task<string> GetCurrentWeatherAsync(string city)
         {
             try
@@ -64,15 +74,14 @@ namespace Stribog
         private string FormatWeatherReport(JObject weatherJson, JObject forecastJson)
         {
             var sb = new StringBuilder();
-            // Важливо: тепер показуємо місцевий час міста
             var utcOffset = TimeSpan.FromSeconds(weatherJson["timezone"].Value<int>());
             var localTime = DateTimeOffset.UtcNow.ToOffset(utcOffset);
 
-            sb.AppendLine($"*{weatherJson["name"]}, {weatherJson["sys"]["country"]}*");
+            sb.AppendLine($"*{SanitizeMarkdown(weatherJson["name"].ToString())}, {SanitizeMarkdown(weatherJson["sys"]["country"].ToString())}*");
             sb.AppendLine($"_{localTime:dd MMMM, dddd HH:mm}_");
             sb.AppendLine();
 
-            var description = weatherJson["weather"][0]["description"].ToString();
+            var description = SanitizeMarkdown(weatherJson["weather"][0]["description"].ToString());
             description = char.ToUpper(description[0]) + description.Substring(1);
             var icon = GetWeatherIcon(weatherJson["weather"][0]["main"].ToString());
             var temp = weatherJson["main"]["temp"].Value<double>();
@@ -82,23 +91,30 @@ namespace Stribog
             sb.AppendLine($"Відчувається як: *{weatherJson["main"]["feels_like"].Value<double>():+#;-#;0}°C*");
             sb.AppendLine("`------------------------------`");
 
-            var hourlyForecasts = forecastJson["list"];
+            var hourlyForecasts = forecastJson?["list"];
             string rainInfo = GetRainInfo(hourlyForecasts);
             if (!string.IsNullOrEmpty(rainInfo)) sb.AppendLine(rainInfo);
             
             string advice = GetWeatherAdvice(weatherJson["weather"][0]["main"].ToString(), temp);
-            if (!string.IsNullOrEmpty(advice))
-            {
-                sb.AppendLine(advice);
-            }
-             if (!string.IsNullOrEmpty(rainInfo) || !string.IsNullOrEmpty(advice))
+            if (!string.IsNullOrEmpty(advice)) sb.AppendLine(advice);
+            
+            if (!string.IsNullOrEmpty(rainInfo) || !string.IsNullOrEmpty(advice))
             {
                 sb.AppendLine("`------------------------------`");
             }
             
-            var todayForecasts = hourlyForecasts.Where(f => DateTimeOffset.FromUnixTimeSeconds(f["dt"].Value<long>()).ToOffset(utcOffset).Date == localTime.Date);
-            var minTemp = todayForecasts.Any() ? todayForecasts.Min(f => f["main"]["temp_min"].Value<double>()) : weatherJson["main"]["temp_min"].Value<double>();
-            var maxTemp = todayForecasts.Any() ? todayForecasts.Max(f => f["main"]["temp_max"].Value<double>()) : weatherJson["main"]["temp_max"].Value<double>();
+            double minTemp = weatherJson["main"]["temp_min"].Value<double>();
+            double maxTemp = weatherJson["main"]["temp_max"].Value<double>();
+
+            if (hourlyForecasts != null && hourlyForecasts.Any())
+            {
+                var todayForecasts = hourlyForecasts.Where(f => DateTimeOffset.FromUnixTimeSeconds(f["dt"].Value<long>()).ToOffset(utcOffset).Date == localTime.Date);
+                if (todayForecasts.Any())
+                {
+                    minTemp = todayForecasts.Min(f => f["main"]["temp_min"].Value<double>());
+                    maxTemp = todayForecasts.Max(f => f["main"]["temp_max"].Value<double>());
+                }
+            }
             
             sb.AppendLine($"Макс.: *{maxTemp:+#;-#;0}°*, мін.: *{minTemp:+#;-#;0}°*");
             sb.AppendLine($"Вітер: *{GetWindDirection(weatherJson["wind"]["deg"].Value<double>())} {weatherJson["wind"]["speed"]} м/с*");
@@ -122,14 +138,14 @@ namespace Stribog
                 .ToList();
 
             if (!rainSlots.Any()) return "";
-            return $"🌧 *Очікується дощ*, найближчий приблизно о {rainSlots.First():HH:mm}.";
+            return $"🌧 *Очікується дощ*, найближчий приблизно о {rainSlots.First():HH:mm}\\.";
         }
 
         private string GetWeatherAdvice(string weatherMain, double temp)
         {
-            if (weatherMain == "Rain" || weatherMain == "Thunderstorm") return "💡 Порада: Не забудьте парасольку! 🌂";
-            if (temp > 28) return "💡 Порада: Спека! Пийте більше води. 💧";
-            if (temp < -5) return "💡 Порада: Одягайтеся тепліше, на вулиці морозно! 🧤";
+            if (weatherMain == "Rain" || weatherMain == "Thunderstorm") return "💡 Порада: Не забудьте парасольку\\! 🌂";
+            if (temp > 28) return "💡 Порада: Спека\\! Пийте більше води\\. 💧";
+            if (temp < -5) return "💡 Порада: Одягайтеся тепліше, на вулиці морозно\\! 🧤";
             return "";
         }
         
@@ -144,21 +160,21 @@ namespace Stribog
                 
                 if (json["list"] == null || !json["list"].Any())
                 {
-                    return $"*Прогноз для м. {json["city"]?["name"]}*\n\nНа жаль, погодинний прогноз на сьогодні недоступний.";
+                    return $"*Прогноз для м\\. {SanitizeMarkdown(json["city"]?["name"].ToString())}*\n\nНа жаль, погодинний прогноз на сьогодні недоступний\\.";
                 }
 
-                var sb = new StringBuilder($"*Погодинний прогноз для м. {json["city"]["name"]} до кінця дня:*\n\n");
+                var sb = new StringBuilder($"*Погодинний прогноз для м\\. {SanitizeMarkdown(json["city"]["name"].ToString())} до кінця дня:*\n\n");
                 var forecasts = json["list"]
                     .Select(item => new {
                         Date = DateTimeOffset.FromUnixTimeSeconds(item["dt"].Value<long>()).LocalDateTime,
                         Temp = (int)Math.Round(item["main"]["temp"].Value<double>()),
-                        Description = item["weather"][0]["description"].ToString(),
+                        Description = SanitizeMarkdown(item["weather"][0]["description"].ToString()),
                         Icon = GetWeatherIcon(item["weather"][0]["main"].ToString())
                     })
                     .Where(f => f.Date.Date == DateTime.Today && f.Date.Hour >= DateTime.Now.Hour).Take(8);
 
-                if (!forecasts.Any()) return $"*Прогноз для м. {json["city"]["name"]}*\n\nНа сьогодні більше немає даних.";
-                foreach (var f in forecasts) sb.AppendLine($"`{f.Date:HH:mm}` - {f.Temp}°C, {f.Description} {f.Icon}");
+                if (!forecasts.Any()) return $"*Прогноз для м\\. {SanitizeMarkdown(json["city"]["name"].ToString())}*\n\nНа сьогодні більше немає даних\\.";
+                foreach (var f in forecasts) sb.AppendLine($"`{f.Date:HH:mm}` \\- {f.Temp}°C, {f.Description} {f.Icon}");
                 return sb.ToString();
             }
             catch (Exception ex)
@@ -175,7 +191,7 @@ namespace Stribog
             var json = JObject.Parse(response);
             if (json["cod"]?.ToString() != "200") return "Не вдалося знайти місто.";
 
-            var sb = new StringBuilder($"*Прогноз на 5 днів для м. {json["city"]["name"]}:*\n\n");
+            var sb = new StringBuilder($"*Прогноз на 5 днів для м\\. {SanitizeMarkdown(json["city"]["name"].ToString())}:*\n\n");
             
             var forecasts = json["list"]
                 .GroupBy(item => DateTimeOffset.FromUnixTimeSeconds(item["dt"].Value<long>()).LocalDateTime.Date)
@@ -185,12 +201,12 @@ namespace Stribog
                         Date = g.Key,
                         TempMin = g.Min(x => x["main"]["temp"].Value<double>()),
                         TempMax = g.Max(x => x["main"]["temp"].Value<double>()),
-                        Description = midPoint["weather"][0]["description"].ToString().Replace("_", " "),
+                        Description = SanitizeMarkdown(midPoint["weather"][0]["description"].ToString()),
                         Icon = GetWeatherIcon(midPoint["weather"][0]["main"].ToString())
                     };
                 }).Where(f => f.Date.Date >= DateTime.Today).Take(5);
 
-            foreach (var f in forecasts) sb.AppendLine($"*{f.Date:dd.MM (ddd)}*: від {Math.Round(f.TempMin)}° до {Math.Round(f.TempMax)}°, {f.Description} {f.Icon}");
+            foreach (var f in forecasts) sb.AppendLine($"*{f.Date:dd\\.MM (ddd)}*: від {Math.Round(f.TempMin)}° до {Math.Round(f.TempMax)}°, {f.Description} {f.Icon}");
             return sb.ToString();
         }
 

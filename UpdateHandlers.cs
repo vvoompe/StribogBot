@@ -70,8 +70,8 @@ namespace Stribog
                 {
                     TempUserSettings[chatId] = new UserSetting { City = text, UtcOffsetSeconds = offset };
                     UserStates[chatId] = "awaiting_time";
-                    // *** ВИПРАВЛЕННЯ: Змінено на MarkdownV2 ***
-                    await botClient.SendTextMessageAsync(chatId, $"Добре, місто *{text}* знайдено\\.\n\nТепер надішліть час для щоденного прогнозу (наприклад, `08:00`)\\.", parseMode: ParseMode.MarkdownV2, cancellationToken: cancellationToken);
+                    // *** ВИПРАВЛЕНО: Використовуємо публічний метод SanitizeMarkdown ***
+                    await botClient.SendTextMessageAsync(chatId, $"Добре, місто *{_weatherService.SanitizeMarkdown(text)}* знайдено\\.\n\nТепер надішліть час для щоденного прогнозу \\(наприклад, `08:00`\\)\\.", parseMode: ParseMode.MarkdownV2, cancellationToken: cancellationToken);
                 }
                 else await botClient.SendTextMessageAsync(chatId, $"Не можу знайти місто '{text}'. Спробуйте ще раз.", cancellationToken: cancellationToken);
             }
@@ -86,8 +86,8 @@ namespace Stribog
                     UserStates.Remove(chatId);
                     TempUserSettings.Remove(chatId);
                     
-                    // *** ВИПРАВЛЕННЯ: Змінено на MarkdownV2 ***
-                    await botClient.SendTextMessageAsync(chatId, $"Чудово\\! Щоденний прогноз для міста *{userSetting.City}* буде надходити о *{time:hh\\:mm}* за його місцевим часом\\.", parseMode: ParseMode.MarkdownV2, cancellationToken: cancellationToken);
+                    // *** ВИПРАВЛЕНО: Використовуємо публічний метод SanitizeMarkdown ***
+                    await botClient.SendTextMessageAsync(chatId, $"Чудово\\! Щоденний прогноз для міста *{_weatherService.SanitizeMarkdown(userSetting.City)}* буде надходити о *{time:hh\\:mm}* за його місцевим часом\\.", parseMode: ParseMode.MarkdownV2, cancellationToken: cancellationToken);
                 }
                 else await botClient.SendTextMessageAsync(chatId, "Неправильний формат часу. Надішліть у форматі `ГГ:ХХ`, наприклад `08:30`.", cancellationToken: cancellationToken);
             }
@@ -129,7 +129,6 @@ namespace Stribog
                     InlineKeyboardButton.WithCallbackData("Прогноз на 5 днів", $"forecast_{city}"),
                 }
             });
-            // *** ВИПРАВЛЕННЯ: Змінено на MarkdownV2 ***
             await botClient.SendTextMessageAsync(chatId, report, parseMode: ParseMode.MarkdownV2, replyMarkup: inlineKeyboard, cancellationToken: cancellationToken);
         }
 
@@ -143,7 +142,6 @@ namespace Stribog
             else if (dataParts[0] == "forecast") resultText = await _weatherService.GetForecastAsync(dataParts[1]);
             else return;
             
-            // *** ВИПРАВЛЕННЯ: Змінено на MarkdownV2 ***
             await botClient.SendTextMessageAsync(chatId, resultText, parseMode: ParseMode.MarkdownV2, cancellationToken: cancellationToken);
             await botClient.AnswerCallbackQueryAsync(callbackQuery.Id, cancellationToken: cancellationToken);
         }
@@ -163,7 +161,6 @@ namespace Stribog
                 return;
             }
             var report = await _weatherService.GetForecastAsync(settings.City);
-            // *** ВИПРАВЛЕННЯ: Змінено на MarkdownV2 ***
             await botClient.SendTextMessageAsync(message.Chat.Id, report, parseMode: ParseMode.MarkdownV2, cancellationToken: cancellationToken);
         }
 

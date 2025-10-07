@@ -5,7 +5,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
 using Telegram.Bot;
-using Telegram.Bot.Types.Enums; // Додано для прямого доступу до ParseMode
+using Telegram.Bot.Types.Enums;
 
 namespace Stribog
 {
@@ -13,12 +13,14 @@ namespace Stribog
     {
         private readonly string _filePath;
         private Dictionary<long, UserSetting> _userSettings;
-        private Dictionary<long, bool> _sentToday = new Dictionary<long, bool>();
+        // Словник для зберігання дати останнього вдалого сповіщення
+        private Dictionary<long, DateTime> _lastNotificationDates = new Dictionary<long, DateTime>();
 
         public UserSettingsService(string filePath)
         {
             _filePath = filePath;
             _userSettings = LoadSettings();
+            Console.WriteLine($"[INFO] Завантажено налаштування для {_userSettings.Count} користувачів.");
         }
 
         private Dictionary<long, UserSetting> LoadSettings()
@@ -51,7 +53,7 @@ namespace Stribog
                     Directory.CreateDirectory(directory);
                 }
                 await File.WriteAllTextAsync(_filePath, json);
-                 Console.WriteLine($"[INFO] Налаштування збережено. Всього користувачів: {_userSettings.Count}.");
+                Console.WriteLine($"[INFO] Налаштування збережено. Всього користувачів: {_userSettings.Count}.");
             }
             catch (Exception ex)
             {
@@ -70,52 +72,50 @@ namespace Stribog
             _userSettings.TryGetValue(chatId, out var settings);
             return Task.FromResult(settings);
         }
-        
+
+        // *** ПОВНІСТЮ ПЕРЕПИСАНА ЛОГІКА РОЗСИЛКИ ДЛЯ МАКСИМАЛЬНОЇ НАДІЙНОСТІ ***
         public async Task CheckAndSendNotifications(ITelegramBotClient botClient, WeatherService weatherService)
         {
             var nowUtc = DateTime.UtcNow;
-
-            if (nowUtc.Hour == 0 && nowUtc.Minute == 0)
-            {
-                _sentToday.Clear();
-                Console.WriteLine($"[INFO] Нова доба. Список сповіщень очищено.");
-            }
 
             foreach (var userEntry in _userSettings)
             {
                 var userId = userEntry.Key;
                 var userSetting = userEntry.Value;
 
-                if (userSetting.City == null || _sentToday.ContainsKey(userId))
+                // Пропускаємо користувачів без налаштованого міста або часу
+                if (userSetting.City == null || userSetting.NotificationTime == TimeSpan.Zero)
                 {
                     continue;
                 }
 
                 var userLocalTime = nowUtc.AddSeconds(userSetting.UtcOffsetSeconds);
+                _lastNotificationDates.TryGetValue(userId, out var lastSentDate);
                 
-                if (userLocalTime.Hour == userSetting.NotificationTime.Hours &&
-                    userLocalTime.Minute == userSetting.NotificationTime.Minutes)
+                // --- НОВА НАДІЙНА ПЕРЕВІРКА ---
+                // 1. Час вже настав АБО пройшов?
+                // 2. Дата останнього сповіщення - це не сьогоднішня дата?
+                if (userLocalTime.TimeOfDay >= userSetting.NotificationTime && lastSentDate.Date < userLocalTime.Date)
                 {
-                    Console.WriteLine($"[INFO] Час для розсилки користувачу {userId}! Його місцевий час: {userLocalTime:HH:mm}. Надсилаємо погоду для м. {userSetting.City}.");
+                    Console.WriteLine($"[INFO] Знайдено користувача для розсилки! ID: {userId}. Місцевий час: {userLocalTime:HH:mm}. Запланований час: {userSetting.NotificationTime:hh\\:mm}.");
                     
                     try
                     {
                         var weatherReport = await weatherService.GetCurrentWeatherAsync(userSetting.City);
                         if (!weatherReport.StartsWith("Помилка"))
                         {
-                            // *** ВИПРАВЛЕННЯ: Змінено на MarkdownV2 ***
                             await botClient.SendTextMessageAsync(userId, weatherReport, parseMode: ParseMode.MarkdownV2);
-                            _sentToday[userId] = true;
+                            _lastNotificationDates[userId] = userLocalTime; // Позначаємо, що сьогодні надіслали
                             Console.WriteLine($"[SUCCESS] Сповіщення для {userId} надіслано успішно.");
                         }
                         else
                         {
-                            Console.WriteLine($"[WARNING] Не вдалося отримати звіт про погоду для {userId}.");
+                            Console.WriteLine($"[WARNING] Не вдалося отримати звіт про погоду для {userId}, сповіщення не надіслано.");
                         }
                     }
                     catch (Exception ex)
                     {
-                         Console.WriteLine($"[ERROR] Не вдалося надіслати сповіщення користувачу {userId}: {ex.Message}");
+                         Console.WriteLine($"[ERROR] Не вдалося надіслати сповіщення користувачеві {userId}: {ex.Message}");
                     }
                 }
             }
@@ -130,14 +130,13 @@ namespace Stribog
             {
                 try
                 {
-                    // *** ВИПРАВЛЕННЯ: Змінено на MarkdownV2 ***
                     await botClient.SendTextMessageAsync(userId, message, parseMode: ParseMode.MarkdownV2);
                     successfulSends++;
                     await Task.Delay(100);
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[ERROR] Не вдалося надіслати повідомлення користувачу {userId} під час розсилки: {ex.Message}");
+                    Console.WriteLine($"[ERROR] Не вдалося надіслати повідомлення користувачеві {userId} під час розсилки: {ex.Message}");
                 }
             }
             return successfulSends;
