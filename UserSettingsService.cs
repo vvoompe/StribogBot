@@ -12,7 +12,7 @@ namespace Stribog
     {
         private readonly string _filePath;
         private Dictionary<long, UserSetting> _userSettings;
-        private List<long> _sentToday = new List<long>();
+        private Dictionary<long, bool> _sentToday = new Dictionary<long, bool>();
 
         public UserSettingsService(string filePath)
         {
@@ -30,7 +30,7 @@ namespace Stribog
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Помилка завантаження налаштувань: {ex.Message}");
+                Console.WriteLine($"[ERROR] Помилка завантаження налаштувань: {ex.Message}");
                 return new Dictionary<long, UserSetting>();
             }
         }
@@ -40,37 +40,24 @@ namespace Stribog
             try
             {
                 var json = JsonConvert.SerializeObject(_userSettings, Formatting.Indented);
-                // Перевіряємо, чи існує директорія
                 var directory = Path.GetDirectoryName(_filePath);
-                if (!Directory.Exists(directory))
+                if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
                 {
                     Directory.CreateDirectory(directory);
                 }
                 await File.WriteAllTextAsync(_filePath, json);
+                 Console.WriteLine($"[INFO] Налаштування збережено для {_userSettings.Count} користувачів.");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Помилка збереження налаштувань: {ex.Message}");
+                Console.WriteLine($"[ERROR] Помилка збереження налаштувань: {ex.Message}");
             }
         }
 
-        public async Task SetDefaultCityAsync(long chatId, string city)
+        public async Task SetUserSettingAsync(long chatId, UserSetting setting)
         {
-            if (!_userSettings.ContainsKey(chatId))
-            {
-                _userSettings[chatId] = new UserSetting();
-            }
-            _userSettings[chatId].City = city;
+            _userSettings[chatId] = setting;
             await SaveSettingsAsync();
-        }
-
-        public async Task SetUserNotificationTimeAsync(long chatId, TimeSpan time)
-        {
-            if (_userSettings.ContainsKey(chatId) && _userSettings[chatId].City != null)
-            {
-                _userSettings[chatId].NotificationTime = time;
-                await SaveSettingsAsync();
-            }
         }
 
         public Task<UserSetting> GetUserSettingsAsync(long chatId)
@@ -81,31 +68,49 @@ namespace Stribog
 
         public async Task CheckAndSendNotifications(ITelegramBotClient botClient, WeatherService weatherService)
         {
-            var now = DateTime.Now;
-            if (now.Hour == 0 && now.Minute <= 1) _sentToday.Clear();
+            var nowUtc = DateTime.UtcNow;
+            
+            // Опівночі скидаємо статус для всіх
+            if (nowUtc.Hour == 0 && nowUtc.Minute == 0) _sentToday.Clear();
 
-            var usersToSend = _userSettings
-                .Where(s => s.Value.City != null &&
-                            now.Hour == s.Value.NotificationTime.Hours &&
-                            now.Minute == s.Value.NotificationTime.Minutes &&
-                            !_sentToday.Contains(s.Key))
-                .ToList();
+            var usersToSend = _userSettings.Where(s => s.Value.City != null).ToList();
 
-            foreach (var user in usersToSend)
+            foreach (var userEntry in usersToSend)
             {
-                var weatherReport = await weatherService.GetCurrentWeatherAsync(user.Value.City);
-                if (!weatherReport.StartsWith("Помилка"))
+                var userId = userEntry.Key;
+                var userSetting = userEntry.Value;
+                
+                // Перевіряємо, чи ми вже надсилали сьогодні
+                if (_sentToday.ContainsKey(userId) && _sentToday[userId]) continue;
+
+                var userLocalTime = nowUtc.AddSeconds(userSetting.UtcOffsetSeconds);
+
+                if (userLocalTime.Hour == userSetting.NotificationTime.Hours &&
+                    userLocalTime.Minute == userSetting.NotificationTime.Minutes)
                 {
-                    await botClient.SendTextMessageAsync(user.Key, weatherReport, parseMode: Telegram.Bot.Types.Enums.ParseMode.Markdown);
-                    _sentToday.Add(user.Key);
+                    try
+                    {
+                        var weatherReport = await weatherService.GetCurrentWeatherAsync(userSetting.City);
+                        if (!weatherReport.StartsWith("Помилка"))
+                        {
+                            await botClient.SendTextMessageAsync(userId, weatherReport, parseMode: Telegram.Bot.Types.Enums.ParseMode.Markdown);
+                            _sentToday[userId] = true;
+                            Console.WriteLine($"[SUCCESS] Сповіщення надіслано користувачу {userId} о {userLocalTime:HH:mm} його місцевого часу.");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                         Console.WriteLine($"[ERROR] Не вдалося надіслати сповіщення користувачу {userId}: {ex.Message}");
+                    }
                 }
             }
         }
-
+        
         public async Task<int> BroadcastMessageAsync(ITelegramBotClient botClient, string message)
         {
             var userIds = _userSettings.Keys.ToList();
             int successfulSends = 0;
+            Console.WriteLine($"[ADMIN] Починаю розсилку для {userIds.Count} користувачів.");
             foreach (var userId in userIds)
             {
                 try
@@ -116,7 +121,7 @@ namespace Stribog
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Не вдалося надіслати повідомлення користувачу {userId}: {ex.Message}");
+                    Console.WriteLine($"[ERROR] Не вдалося надіслати повідомлення користувачу {userId} під час розсилки: {ex.Message}");
                 }
             }
             return successfulSends;

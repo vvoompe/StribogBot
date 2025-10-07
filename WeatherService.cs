@@ -18,6 +18,28 @@ namespace Stribog
             _httpClient = new HttpClient();
         }
 
+        // *** НОВИЙ МЕТОД: Отримуємо зміщення часового поясу для міста ***
+        public async Task<(bool Success, int OffsetSeconds)> GetTimezoneOffsetAsync(string city)
+        {
+            try
+            {
+                var weatherUrl = $"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={_apiKey}";
+                var response = await _httpClient.GetStringAsync(weatherUrl);
+                var json = JObject.Parse(response);
+                if (json["cod"]?.ToString() == "200")
+                {
+                    var offset = json["timezone"].Value<int>();
+                    return (true, offset);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Не вдалося отримати часовий пояс для {city}: {ex.Message}");
+            }
+            return (false, 0);
+        }
+        
+        // ... (решта методів: GetCurrentWeatherAsync, FormatWeatherReport і т.д. залишаються без змін)
         public async Task<string> GetCurrentWeatherAsync(string city)
         {
             try
@@ -42,10 +64,12 @@ namespace Stribog
         private string FormatWeatherReport(JObject weatherJson, JObject forecastJson)
         {
             var sb = new StringBuilder();
-            var dt = DateTimeOffset.FromUnixTimeSeconds(weatherJson["dt"].Value<long>()).LocalDateTime;
+            // Важливо: тепер показуємо місцевий час міста
+            var utcOffset = TimeSpan.FromSeconds(weatherJson["timezone"].Value<int>());
+            var localTime = DateTimeOffset.UtcNow.ToOffset(utcOffset);
 
             sb.AppendLine($"*{weatherJson["name"]}, {weatherJson["sys"]["country"]}*");
-            sb.AppendLine($"_{dt:dd MMMM, dddd}_");
+            sb.AppendLine($"_{localTime:dd MMMM, dddd HH:mm}_");
             sb.AppendLine();
 
             var description = weatherJson["weather"][0]["description"].ToString();
@@ -72,7 +96,7 @@ namespace Stribog
                 sb.AppendLine("`------------------------------`");
             }
             
-            var todayForecasts = hourlyForecasts.Where(f => DateTimeOffset.FromUnixTimeSeconds(f["dt"].Value<long>()).LocalDateTime.Date == DateTime.Today);
+            var todayForecasts = hourlyForecasts.Where(f => DateTimeOffset.FromUnixTimeSeconds(f["dt"].Value<long>()).ToOffset(utcOffset).Date == localTime.Date);
             var minTemp = todayForecasts.Any() ? todayForecasts.Min(f => f["main"]["temp_min"].Value<double>()) : weatherJson["main"]["temp_min"].Value<double>();
             var maxTemp = todayForecasts.Any() ? todayForecasts.Max(f => f["main"]["temp_max"].Value<double>()) : weatherJson["main"]["temp_max"].Value<double>();
             
@@ -81,8 +105,8 @@ namespace Stribog
             sb.AppendLine($"Вологість: *{weatherJson["main"]["humidity"]}%*");
             sb.AppendLine($"Тиск: *{weatherJson["main"]["pressure"]} hPa*");
 
-            var sunrise = DateTimeOffset.FromUnixTimeSeconds(weatherJson["sys"]["sunrise"].Value<long>()).LocalDateTime;
-            var sunset = DateTimeOffset.FromUnixTimeSeconds(weatherJson["sys"]["sunset"].Value<long>()).LocalDateTime;
+            var sunrise = DateTimeOffset.FromUnixTimeSeconds(weatherJson["sys"]["sunrise"].Value<long>()).ToOffset(utcOffset);
+            var sunset = DateTimeOffset.FromUnixTimeSeconds(weatherJson["sys"]["sunset"].Value<long>()).ToOffset(utcOffset);
             sb.AppendLine($"Схід: *{sunrise:HH:mm}*");
             sb.AppendLine($"Захід: *{sunset:HH:mm}*");
 
@@ -118,7 +142,6 @@ namespace Stribog
                 var json = JObject.Parse(response);
                 if (json["cod"]?.ToString() != "200") return "Не вдалося знайти місто.";
                 
-                // *** ВИПРАВЛЕННЯ: Додано перевірку на наявність даних ***
                 if (json["list"] == null || !json["list"].Any())
                 {
                     return $"*Прогноз для м. {json["city"]?["name"]}*\n\nНа жаль, погодинний прогноз на сьогодні недоступний.";
@@ -153,14 +176,18 @@ namespace Stribog
             if (json["cod"]?.ToString() != "200") return "Не вдалося знайти місто.";
 
             var sb = new StringBuilder($"*Прогноз на 5 днів для м. {json["city"]["name"]}:*\n\n");
+            
             var forecasts = json["list"]
                 .GroupBy(item => DateTimeOffset.FromUnixTimeSeconds(item["dt"].Value<long>()).LocalDateTime.Date)
-                .Select(g => new {
-                    Date = g.Key,
-                    TempMin = g.Min(x => x["main"]["temp"].Value<double>()),
-                    TempMax = g.Max(x => x["main"]["temp"].Value<double>()),
-                    Description = g.OrderBy(x=> x["dt"]).ElementAt(g.Count()/2)["weather"][0]["description"].ToString(),
-                    Icon = GetWeatherIcon(g.OrderBy(x=> x["dt"]).ElementAt(g.Count()/2)["weather"][0]["main"].ToString())
+                .Select(g => {
+                    var midPoint = g.OrderBy(x=> x["dt"]).ElementAt(g.Count()/2);
+                    return new {
+                        Date = g.Key,
+                        TempMin = g.Min(x => x["main"]["temp"].Value<double>()),
+                        TempMax = g.Max(x => x["main"]["temp"].Value<double>()),
+                        Description = midPoint["weather"][0]["description"].ToString().Replace("_", " "),
+                        Icon = GetWeatherIcon(midPoint["weather"][0]["main"].ToString())
+                    };
                 }).Where(f => f.Date.Date >= DateTime.Today).Take(5);
 
             foreach (var f in forecasts) sb.AppendLine($"*{f.Date:dd.MM (ddd)}*: від {Math.Round(f.TempMin)}° до {Math.Round(f.TempMax)}°, {f.Description} {f.Icon}");

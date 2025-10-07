@@ -16,6 +16,8 @@ namespace Stribog
         private readonly WeatherService _weatherService;
         private readonly UserSettingsService _userSettingsService;
         private readonly string _adminId;
+        // Тепер зберігаємо тимчасові налаштування в процесі діалогу
+        private static readonly Dictionary<long, UserSetting> TempUserSettings = new Dictionary<long, UserSetting>();
         private static readonly Dictionary<long, string> UserStates = new Dictionary<long, string>();
 
         public UpdateHandlers(ITelegramBotClient botClient, WeatherService weatherService, UserSettingsService userSettingsService, string adminId)
@@ -64,11 +66,12 @@ namespace Stribog
 
             if (state == "awaiting_city")
             {
-                if (await _weatherService.CityExistsAsync(text))
+                var (success, offset) = await _weatherService.GetTimezoneOffsetAsync(text);
+                if (success)
                 {
-                    await _userSettingsService.SetDefaultCityAsync(chatId, text);
+                    TempUserSettings[chatId] = new UserSetting { City = text, UtcOffsetSeconds = offset };
                     UserStates[chatId] = "awaiting_time";
-                    await botClient.SendTextMessageAsync(chatId, $"Добре, місто збережено як *{text}*.\n\nТепер надішліть час для щоденного прогнозу (наприклад, `08:00` або `7:30`).", parseMode: ParseMode.Markdown, cancellationToken: cancellationToken);
+                    await botClient.SendTextMessageAsync(chatId, $"Добре, місто *{text}* знайдено.\n\nТепер надішліть час для щоденного прогнозу (наприклад, `08:00`).", parseMode: ParseMode.Markdown, cancellationToken: cancellationToken);
                 }
                 else await botClient.SendTextMessageAsync(chatId, $"Не можу знайти місто '{text}'. Спробуйте ще раз.", cancellationToken: cancellationToken);
             }
@@ -76,14 +79,20 @@ namespace Stribog
             {
                 if (TimeSpan.TryParse(text, out var time))
                 {
-                    await _userSettingsService.SetUserNotificationTimeAsync(chatId, time);
+                    var userSetting = TempUserSettings[chatId];
+                    userSetting.NotificationTime = time;
+                    await _userSettingsService.SetUserSettingAsync(chatId, userSetting);
+                    
                     UserStates.Remove(chatId);
-                    await botClient.SendTextMessageAsync(chatId, $"Чудово! Щоденний прогноз буде надходити о *{time:hh\\:mm}*.", parseMode: ParseMode.Markdown, cancellationToken: cancellationToken);
+                    TempUserSettings.Remove(chatId);
+
+                    await botClient.SendTextMessageAsync(chatId, $"Чудово! Щоденний прогноз для міста *{userSetting.City}* буде надходити о *{time:hh\\:mm}* за його місцевим часом.", parseMode: ParseMode.Markdown, cancellationToken: cancellationToken);
                 }
                 else await botClient.SendTextMessageAsync(chatId, "Неправильний формат часу. Надішліть у форматі `ГГ:ХХ`, наприклад `08:30`.", cancellationToken: cancellationToken);
             }
         }
 
+        // ... (решта методів залишається без змін) ...
         private async Task ProcessTextMessage(ITelegramBotClient botClient, Message message, CancellationToken cancellationToken)
         {
             var command = message.Text.Split(' ').First().ToLower();
