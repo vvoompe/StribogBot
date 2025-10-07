@@ -1,5 +1,7 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
 using Telegram.Bot;
@@ -9,7 +11,9 @@ namespace Stribog
     public class UserSettingsService
     {
         private readonly string _filePath;
-        private Dictionary<long, string> _userSettings;
+        private Dictionary<long, UserSetting> _userSettings;
+        // Список користувачів, яким вже сьогодні надсилали сповіщення
+        private List<long> _sentToday = new List<long>();
 
         public UserSettingsService(string filePath)
         {
@@ -17,14 +21,14 @@ namespace Stribog
             _userSettings = LoadSettings();
         }
 
-        private Dictionary<long, string> LoadSettings()
+        private Dictionary<long, UserSetting> LoadSettings()
         {
             if (!File.Exists(_filePath))
             {
-                return new Dictionary<long, string>();
+                return new Dictionary<long, UserSetting>();
             }
             var json = File.ReadAllText(_filePath);
-            return JsonConvert.DeserializeObject<Dictionary<long, string>>(json) ?? new Dictionary<long, string>();
+            return JsonConvert.DeserializeObject<Dictionary<long, UserSetting>>(json) ?? new Dictionary<long, UserSetting>();
         }
 
         private async Task SaveSettingsAsync()
@@ -35,25 +39,56 @@ namespace Stribog
 
         public async Task SetDefaultCityAsync(long chatId, string city)
         {
-            _userSettings[chatId] = city;
+            if (!_userSettings.ContainsKey(chatId))
+            {
+                _userSettings[chatId] = new UserSetting();
+            }
+            _userSettings[chatId].City = city;
             await SaveSettingsAsync();
         }
-
-        public Task<string> GetDefaultCityAsync(long chatId)
+        
+        public async Task SetUserNotificationTimeAsync(long chatId, TimeSpan time)
         {
-            _userSettings.TryGetValue(chatId, out var city);
-            return Task.FromResult(city);
+            if (_userSettings.ContainsKey(chatId))
+            {
+                _userSettings[chatId].NotificationTime = time;
+                await SaveSettingsAsync();
+            }
         }
 
-        public async Task SendWeatherNotifications(ITelegramBotClient botClient, WeatherService weatherService)
+        public Task<UserSetting> GetUserSettingsAsync(long chatId)
         {
-            System.Console.WriteLine("Розпочато надсилання щоденних оновлень...");
-            foreach (var setting in _userSettings)
+            _userSettings.TryGetValue(chatId, out var settings);
+            return Task.FromResult(settings);
+        }
+
+        // Логіка щохвилинної перевірки та надсилання сповіщень
+        public async Task CheckAndSendNotifications(ITelegramBotClient botClient, WeatherService weatherService)
+        {
+            var now = DateTime.Now;
+            // Скидаємо список опівночі
+            if (now.TimeOfDay.Hours == 0 && now.TimeOfDay.Minutes == 0)
             {
-                var weatherReport = await weatherService.GetCurrentWeatherAsync(setting.Value);
-                await botClient.SendTextMessageAsync(setting.Key, weatherReport);
+                _sentToday.Clear();
             }
-            System.Console.WriteLine("Надсилання завершено.");
+
+            // Знаходимо користувачів, яким час надіслати сповіщення
+            var usersToSend = _userSettings
+                .Where(s => now.Hour == s.Value.NotificationTime.Hours &&
+                            now.Minute == s.Value.NotificationTime.Minutes &&
+                            !_sentToday.Contains(s.Key))
+                .ToList();
+
+            if (usersToSend.Any())
+            {
+                Console.WriteLine($"Надсилаємо сповіщення для {usersToSend.Count} користувачів...");
+                foreach (var user in usersToSend)
+                {
+                    var weatherReport = await weatherService.GetCurrentWeatherAsync(user.Value.City);
+                    await botClient.SendTextMessageAsync(user.Key, weatherReport, parseMode: Telegram.Bot.Types.Enums.ParseMode.Markdown);
+                    _sentToday.Add(user.Key); // Позначаємо, що сьогодні вже надіслали
+                }
+            }
         }
     }
 }
