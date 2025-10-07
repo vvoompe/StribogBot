@@ -18,7 +18,7 @@ namespace Stribog
             _httpClient = new HttpClient();
         }
         
-        // *** ВИПРАВЛЕННЯ: Зроблено публічним (public), щоб інші класи мали доступ ***
+        // *** ФІНАЛЬНЕ ВИПРАВЛЕННЯ: Додано всі необхідні символи для екранування ***
         public string SanitizeMarkdown(string text)
         {
             if (string.IsNullOrEmpty(text)) return "";
@@ -85,10 +85,11 @@ namespace Stribog
             description = char.ToUpper(description[0]) + description.Substring(1);
             var icon = GetWeatherIcon(weatherJson["weather"][0]["main"].ToString());
             var temp = weatherJson["main"]["temp"].Value<double>();
+            var feelsLike = weatherJson["main"]["feels_like"].Value<double>();
 
             sb.AppendLine($"{description} {icon}");
-            sb.AppendLine($"🌡️ *{temp:+#;-#;0}°C*");
-            sb.AppendLine($"Відчувається як: *{weatherJson["main"]["feels_like"].Value<double>():+#;-#;0}°C*");
+            sb.AppendLine($"🌡️ *{SanitizeMarkdown(temp.ToString("+#;-#;0"))}°C*");
+            sb.AppendLine($"Відчувається як: *{SanitizeMarkdown(feelsLike.ToString("+#;-#;0"))}°C*");
             sb.AppendLine("`------------------------------`");
 
             var hourlyForecasts = forecastJson?["list"];
@@ -116,8 +117,8 @@ namespace Stribog
                 }
             }
             
-            sb.AppendLine($"Макс.: *{maxTemp:+#;-#;0}°*, мін.: *{minTemp:+#;-#;0}°*");
-            sb.AppendLine($"Вітер: *{GetWindDirection(weatherJson["wind"]["deg"].Value<double>())} {weatherJson["wind"]["speed"]} м/с*");
+            sb.AppendLine($"Макс\\.: *{SanitizeMarkdown(maxTemp.ToString("+#;-#;0"))}°*, мін\\.: *{SanitizeMarkdown(minTemp.ToString("+#;-#;0"))}°*");
+            sb.AppendLine($"Вітер: *{GetWindDirection(weatherJson["wind"]["deg"].Value<double>())} {SanitizeMarkdown(weatherJson["wind"]["speed"].ToString())} м/с*");
             sb.AppendLine($"Вологість: *{weatherJson["main"]["humidity"]}%*");
             sb.AppendLine($"Тиск: *{weatherJson["main"]["pressure"]} hPa*");
 
@@ -156,7 +157,7 @@ namespace Stribog
                 var url = $"https://api.openweathermap.org/data/2.5/forecast?q={city}&appid={_apiKey}&units=metric&lang=ua";
                 var response = await _httpClient.GetStringAsync(url);
                 var json = JObject.Parse(response);
-                if (json["cod"]?.ToString() != "200") return "Не вдалося знайти місто.";
+                if (json["cod"]?.ToString() != "200") return "Не вдалося знайти місто\\.";
                 
                 if (json["list"] == null || !json["list"].Any())
                 {
@@ -180,7 +181,7 @@ namespace Stribog
             catch (Exception ex)
             {
                 Console.WriteLine($"Помилка в GetEveningForecastAsync: {ex.Message}");
-                return "Не вдалося отримати погодинний прогноз.";
+                return "Не вдалося отримати погодинний прогноз\\.";
             }
         }
 
@@ -189,7 +190,7 @@ namespace Stribog
             var url = $"https://api.openweathermap.org/data/2.5/forecast?q={city}&appid={_apiKey}&units=metric&lang=ua";
             var response = await _httpClient.GetStringAsync(url);
             var json = JObject.Parse(response);
-            if (json["cod"]?.ToString() != "200") return "Не вдалося знайти місто.";
+            if (json["cod"]?.ToString() != "200") return "Не вдалося знайти місто\\.";
 
             var sb = new StringBuilder($"*Прогноз на 5 днів для м\\. {SanitizeMarkdown(json["city"]["name"].ToString())}:*\n\n");
             
