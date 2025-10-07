@@ -60,6 +60,9 @@ namespace Stribog
 
         public async Task SetUserSettingAsync(long chatId, UserSetting setting)
         {
+            // Важливо: при оновленні налаштувань, скидаємо дату останнього сповіщення,
+            // щоб користувач отримав його вже сьогодні, якщо час ще не пройшов.
+            setting.LastNotificationDate = DateTime.UtcNow.AddDays(-1);
             _userSettings[chatId] = setting;
             await SaveSettingsAsync();
         }
@@ -75,7 +78,6 @@ namespace Stribog
         {
             var nowUtc = DateTime.UtcNow;
             
-            // Робимо копію, щоб уникнути проблем при зміні колекції
             var usersToCheck = _userSettings.ToList();
 
             foreach (var userEntry in usersToCheck)
@@ -90,9 +92,14 @@ namespace Stribog
 
                 var userLocalTime = nowUtc.AddSeconds(userSetting.UtcOffsetSeconds);
                 
-                // 1. Час сповіщення вже настав?
-                // 2. Сьогоднішня дата більша за дату останнього сповіщення?
-                if (userLocalTime.TimeOfDay >= userSetting.NotificationTime && userSetting.LastNotificationDate.Date < userLocalTime.Date)
+                // --- НОВА НАДІЙНА ПЕРЕВІРКА ---
+                bool isTimeToSend = userLocalTime.TimeOfDay >= userSetting.NotificationTime;
+                bool wasNotSentToday = userSetting.LastNotificationDate.ToUniversalTime().Date < nowUtc.Date;
+                
+                // Детальне логування для діагностики
+                // Console.WriteLine($"[DEBUG] User: {userId}, LocalTime: {userLocalTime:HH:mm}, NotifyTime: {userSetting.NotificationTime:hh\\:mm}, isTime: {isTimeToSend}, wasNotSent: {wasNotSentToday}");
+
+                if (isTimeToSend && wasNotSentToday)
                 {
                     Console.WriteLine($"[INFO] Знайдено користувача для розсилки! ID: {userId}. Місцевий час: {userLocalTime:HH:mm}.");
                     
@@ -103,15 +110,10 @@ namespace Stribog
                         {
                             await botClient.SendTextMessageAsync(userId, weatherReport, parseMode: ParseMode.MarkdownV2);
                             
-                            // *** ЗБЕРІГАЄМО ДАТУ В ПОСТІЙНУ ПАМ'ЯТЬ ***
-                            userSetting.LastNotificationDate = userLocalTime;
+                            userSetting.LastNotificationDate = nowUtc;
                             await SaveSettingsAsync();
                             
                             Console.WriteLine($"[SUCCESS] Сповіщення для {userId} надіслано успішно. Дата збережена.");
-                        }
-                        else
-                        {
-                            Console.WriteLine($"[WARNING] Не вдалося отримати звіт про погоду для {userId}.");
                         }
                     }
                     catch (Exception ex)
