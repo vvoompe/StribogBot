@@ -16,8 +16,6 @@ namespace Stribog
         private readonly ITelegramBotClient _botClient;
         private readonly WeatherService _weatherService;
         private readonly UserSettingsService _userSettingsService;
-
-        // Словник для відстеження стану розмови з кожним користувачем
         private static readonly Dictionary<long, string> UserStates = new Dictionary<long, string>();
 
         public UpdateHandlers(ITelegramBotClient botClient, WeatherService weatherService, UserSettingsService userSettingsService)
@@ -35,22 +33,18 @@ namespace Stribog
                 UpdateType.CallbackQuery => HandleCallbackQueryAsync(botClient, update.CallbackQuery, cancellationToken),
                 _ => Task.CompletedTask
             };
-
             await handler;
         }
 
         private async Task HandleMessageAsync(ITelegramBotClient botClient, Message message, CancellationToken cancellationToken)
         {
             var chatId = message.Chat.Id;
-
-            // Перевіряємо, чи користувач знаходиться в процесі налаштування
             if (UserStates.TryGetValue(chatId, out var state))
             {
                 await HandleStatefulMessageAsync(botClient, message, state, cancellationToken);
                 return;
             }
 
-            // Стандартна обробка
             if (message.Location != null)
             {
                 await ProcessLocationMessage(botClient, message, cancellationToken);
@@ -60,7 +54,8 @@ namespace Stribog
                 await ProcessTextMessage(botClient, message, cancellationToken);
             }
         }
-        
+
+        // ... (HandleStatefulMessageAsync без змін) ...
         private async Task HandleStatefulMessageAsync(ITelegramBotClient botClient, Message message, string state, CancellationToken cancellationToken)
         {
             var chatId = message.Chat.Id;
@@ -96,16 +91,13 @@ namespace Stribog
         
         private async Task ProcessTextMessage(ITelegramBotClient botClient, Message message, CancellationToken cancellationToken)
         {
-            var chatId = message.Chat.Id;
-            var messageText = message.Text;
-            var command = messageText.Split(' ').First().ToLower();
-
+            var command = message.Text.Split(' ').First().ToLower();
             var commandAction = command switch
             {
                 "/start" => HandleStartAsync(botClient, message, cancellationToken),
                 "/forecast" => HandleForecastCommandAsync(botClient, message, cancellationToken),
                 "/setdefault" => HandleSetDefaultCommandAsync(botClient, message, cancellationToken),
-                _ => SendWeatherMenuAsync(botClient, chatId, messageText, cancellationToken)
+                _ => SendWeatherMenuAsync(botClient, message.Chat.Id, message.Text, cancellationToken)
             };
             await commandAction;
         }
@@ -114,34 +106,31 @@ namespace Stribog
         {
             var city = await _weatherService.GetCityNameByCoordsAsync(message.Location.Latitude, message.Location.Longitude);
             if (city != null)
-            {
                 await SendWeatherMenuAsync(botClient, message.Chat.Id, city, cancellationToken);
-            }
             else
-            {
                 await botClient.SendTextMessageAsync(message.Chat.Id, "Не вдалося визначити місто.", cancellationToken: cancellationToken);
-            }
         }
-        
+
         private async Task SendWeatherMenuAsync(ITelegramBotClient botClient, long chatId, string city, CancellationToken cancellationToken)
         {
-             if (!await _weatherService.CityExistsAsync(city))
-             {
-                 await botClient.SendTextMessageAsync(chatId, $"Не можу знайти місто '{city}'. Перевірте назву.", cancellationToken: cancellationToken);
-                 return;
-             }
+            if (!await _weatherService.CityExistsAsync(city))
+            {
+                await botClient.SendTextMessageAsync(chatId, $"Не можу знайти місто '{city}'. Перевірте назву.", cancellationToken: cancellationToken);
+                return;
+            }
             
-             var inlineKeyboard = new InlineKeyboardMarkup(new[]
-             {
-                 new []
-                 {
-                     InlineKeyboardButton.WithCallbackData("🌡️ Поточна погода", $"current_{city}"),
-                     InlineKeyboardButton.WithCallbackData("🗓️ Прогноз на 5 днів", $"forecast_{city}"),
-                 }
-             });
+            // *** ЗМІНА: Оновлюємо кнопки ***
+            var inlineKeyboard = new InlineKeyboardMarkup(new[]
+            {
+                new[]
+                {
+                    InlineKeyboardButton.WithCallbackData("Погода до вечора", $"evening_{city}"),
+                    InlineKeyboardButton.WithCallbackData("Прогноз на 5 днів", $"forecast_{city}"),
+                }
+            });
 
-             await botClient.SendTextMessageAsync(chatId, $"Ви обрали: *{city}*.\nЩо саме вас цікавить?", 
-                 parseMode: ParseMode.Markdown, replyMarkup: inlineKeyboard, cancellationToken: cancellationToken);
+            await botClient.SendTextMessageAsync(chatId, $"Ви обрали: *{city}*. Що саме вас цікавить?",
+                parseMode: ParseMode.Markdown, replyMarkup: inlineKeyboard, cancellationToken: cancellationToken);
         }
 
         private async Task HandleCallbackQueryAsync(ITelegramBotClient botClient, CallbackQuery callbackQuery, CancellationToken cancellationToken)
@@ -151,12 +140,13 @@ namespace Stribog
             var dataParts = callbackQuery.Data.Split(new[] { '_' }, 2);
             var action = dataParts[0];
             var city = dataParts[1];
-            
-            string resultText = "Помилка отримання даних...";
 
-            if (action == "current")
+            string resultText = "Помилка...";
+            
+            // *** ЗМІНА: Додаємо обробку нової кнопки 'evening' ***
+            if (action == "evening")
             {
-                resultText = await _weatherService.GetCurrentWeatherAsync(city);
+                resultText = await _weatherService.GetEveningForecastAsync(city);
             }
             else if (action == "forecast")
             {
@@ -166,8 +156,8 @@ namespace Stribog
             await botClient.EditMessageTextAsync(chatId, messageId, resultText, parseMode: ParseMode.Markdown, cancellationToken: cancellationToken);
             await botClient.AnswerCallbackQueryAsync(callbackQuery.Id, cancellationToken: cancellationToken);
         }
-
-        // --- Обробники команд ---
+        
+        // ... (HandleStartAsync, HandleForecastCommandAsync, HandleSetDefaultCommandAsync без змін) ...
         private async Task HandleStartAsync(ITelegramBotClient botClient, Message message, CancellationToken cancellationToken)
         {
             var keyboard = new ReplyKeyboardMarkup(new[] { new[] { KeyboardButton.WithRequestLocation("📍 Надіслати моє місцезнаходження") } }) { ResizeKeyboard = true };

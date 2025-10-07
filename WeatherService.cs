@@ -23,18 +23,83 @@ namespace Stribog
             var url = $"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={_apiKey}&units=metric&lang=ua";
             return await FormatWeatherReport(url);
         }
+        
+        // *** НОВИЙ МЕТОД: Прогноз до кінця дня ***
+        public async Task<string> GetEveningForecastAsync(string city)
+        {
+            var url = $"https://api.openweathermap.org/data/2.5/forecast?q={city}&appid={_apiKey}&units=metric&lang=ua";
+            try
+            {
+                var response = await _httpClient.GetStringAsync(url);
+                var json = JObject.Parse(response);
+                if (json["cod"]?.ToString() != "200") return "Не вдалося знайти місто.";
+
+                var sb = new StringBuilder();
+                sb.AppendLine($"*Погодинний прогноз для м. {json["city"]["name"]} до кінця дня:*");
+                sb.AppendLine();
+
+                var hourlyForecasts = json["list"]
+                    .Select(item => new
+                    {
+                        Date = DateTimeOffset.FromUnixTimeSeconds(item["dt"].Value<long>()).LocalDateTime,
+                        Temp = (int)Math.Round(item["main"]["temp"].Value<double>()),
+                        Description = item["weather"][0]["description"].ToString(),
+                        Icon = GetWeatherIcon(item["weather"][0]["main"].ToString())
+                    })
+                    .Where(f => f.Date.Date == DateTime.Today && f.Date.Hour > DateTime.Now.Hour)
+                    .Take(8); // Беремо до 8 наступних прогнозів
+
+                if (!hourlyForecasts.Any())
+                {
+                    return $"*Прогноз для м. {json["city"]["name"]}*\n\nНа сьогодні більше немає даних.";
+                }
+
+                foreach (var forecast in hourlyForecasts)
+                {
+                    sb.AppendLine($"`{forecast.Date:HH:mm}` - {forecast.Temp}°C, {forecast.Description} {forecast.Icon}");
+                }
+                
+                return sb.ToString();
+            }
+            catch { return "Помилка отримання погодинного прогнозу."; }
+        }
 
         public async Task<string> GetForecastAsync(string city)
         {
-            // Цей метод залишається без змін, але вивід можна теж стилізувати за бажанням
             var url = $"https://api.openweathermap.org/data/2.5/forecast?q={city}&appid={_apiKey}&units=metric&lang=ua";
-            // ... (попередня логіка прогнозу на 5 днів)
-            return "Прогноз на 5 днів..."; // Поки що заглушка
-        }
+            try
+            {
+                var response = await _httpClient.GetStringAsync(url);
+                var json = JObject.Parse(response);
+                if (json["cod"]?.ToString() != "200") return "Не вдалося знайти місто.";
 
+                var sb = new StringBuilder();
+                sb.AppendLine($"*Прогноз на 5 днів для м. {json["city"]["name"]}:*");
+                sb.AppendLine();
+                
+                var dailyForecasts = json["list"]
+                    .GroupBy(item => DateTimeOffset.FromUnixTimeSeconds(item["dt"].Value<long>()).LocalDateTime.Date)
+                    .Select(g => g.OrderBy(i => Math.Abs(i["main"]["temp"].Value<double>())).First()) // Беремо запис з середньою температурою
+                    .Where(f => DateTimeOffset.FromUnixTimeSeconds(f["dt"].Value<long>()).LocalDateTime.Date > DateTime.Today)
+                    .Take(5);
+
+                foreach (var forecast in dailyForecasts)
+                {
+                    var date = DateTimeOffset.FromUnixTimeSeconds(forecast["dt"].Value<long>()).LocalDateTime;
+                    var temp = (int)Math.Round(forecast["main"]["temp"].Value<double>());
+                    var description = forecast["weather"][0]["description"].ToString();
+                    var icon = GetWeatherIcon(forecast["weather"][0]["main"].ToString());
+                    sb.AppendLine($"*{date:dd.MM (ddd)}*: {temp}°C, {description} {icon}");
+                }
+                return sb.ToString();
+            }
+            catch { return "Помилка отримання прогнозу на 5 днів."; }
+        }
+        
         private async Task<string> FormatWeatherReport(string url)
         {
-            try
+            // ... (цей метод залишається без змін) ...
+             try
             {
                 var response = await _httpClient.GetStringAsync(url);
                 var json = JObject.Parse(response);
@@ -76,11 +141,40 @@ namespace Stribog
             catch { return "Помилка при отриманні погоди."; }
         }
         
-        // --- Допоміжні методи ---
-        public async Task<string> GetCityNameByCoordsAsync(double lat, double lon) { /* ... без змін ... */ return null; }
-        public async Task<bool> CityExistsAsync(string city) { /* ... без змін ... */ return false; }
-        private string GetWeatherIcon(string weather) { /* ... без змін ... */ return ""; }
-
+        // ... (допоміжні методи GetCityNameByCoordsAsync, CityExistsAsync, GetWeatherIcon, GetWindDirection без змін) ...
+        public async Task<string> GetCityNameByCoordsAsync(double lat, double lon) {
+             var url = $"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={_apiKey}&units=metric&lang=ua";
+            try
+            {
+                var response = await _httpClient.GetStringAsync(url);
+                var json = JObject.Parse(response);
+                return json["name"]?.ToString();
+            }
+            catch { return null; }
+        }
+        public async Task<bool> CityExistsAsync(string city) {
+            var url = $"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={_apiKey}";
+            try
+            {
+                var response = await _httpClient.GetStringAsync(url);
+                var json = JObject.Parse(response);
+                return json["cod"]?.ToString() == "200";
+            }
+            catch { return false; }
+        }
+        private string GetWeatherIcon(string weather) {
+            return weather.ToLower() switch
+            {
+                "clear" => "☀️",
+                "clouds" => "☁️",
+                "rain" => "🌧",
+                "drizzle" => "🌦",
+                "thunderstorm" => "⛈",
+                "snow" => "❄️",
+                "mist" or "fog" or "haze" => "🌫",
+                _ => "🌍"
+            };
+        }
         private string GetWindDirection(double degrees)
         {
             string[] directions = { "↑", "↗", "→", "↘", "↓", "↙", "←", "↖" };
