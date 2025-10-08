@@ -35,7 +35,6 @@ class Program
             Console.WriteLine("\n🔄 Виконання міграцій БД...");
             try
             {
-                // ВИПРАВЛЕНО: Використовуємо той самий метод для створення рядка підключення
                 var connectionString = UserSettingsService.BuildConnectionString(databaseUrl);
                 using (var conn = new Npgsql.NpgsqlConnection(connectionString))
                 {
