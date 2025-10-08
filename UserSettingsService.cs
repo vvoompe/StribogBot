@@ -1,4 +1,4 @@
-﻿using System;
+﻿﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -60,9 +60,8 @@ namespace Stribog
 
         public async Task SetUserSettingAsync(long chatId, UserSetting setting)
         {
-            // Важливо: при оновленні налаштувань, скидаємо дату останнього сповіщення,
-            // щоб користувач отримав його вже сьогодні, якщо час ще не пройшов.
-            setting.LastNotificationDate = DateTime.UtcNow.AddDays(-1);
+            // Скидаємо дату останнього сповіщення, щоб користувач отримав його вже сьогодні (якщо час ще не минув)
+            setting.LastNotificationDate = DateTime.MinValue;
             _userSettings[chatId] = setting;
             await SaveSettingsAsync();
         }
@@ -73,11 +72,10 @@ namespace Stribog
             return Task.FromResult(settings);
         }
 
-        // *** ФІНАЛЬНА, НАДІЙНА ЛОГІКА РОЗСИЛКИ ***
+        // --- Виправлена логіка ---
         public async Task CheckAndSendNotifications(ITelegramBotClient botClient, WeatherService weatherService)
         {
             var nowUtc = DateTime.UtcNow;
-            
             var usersToCheck = _userSettings.ToList();
 
             foreach (var userEntry in usersToCheck)
@@ -85,45 +83,46 @@ namespace Stribog
                 var userId = userEntry.Key;
                 var userSetting = userEntry.Value;
 
-                if (userSetting.City == null || userSetting.NotificationTime == TimeSpan.Zero)
-                {
+                if (string.IsNullOrEmpty(userSetting.City) || userSetting.NotificationTime == TimeSpan.Zero)
                     continue;
-                }
 
+                // Локальний час користувача
                 var userLocalTime = nowUtc.AddSeconds(userSetting.UtcOffsetSeconds);
-                
-                // --- НОВА НАДІЙНА ПЕРЕВІРКА ---
+
+                // Чи настав час відправки
                 bool isTimeToSend = userLocalTime.TimeOfDay >= userSetting.NotificationTime;
-                bool wasNotSentToday = userSetting.LastNotificationDate.ToUniversalTime().Date < nowUtc.Date;
-                
-                // Детальне логування для діагностики
-                // Console.WriteLine($"[DEBUG] User: {userId}, LocalTime: {userLocalTime:HH:mm}, NotifyTime: {userSetting.NotificationTime:hh\\:mm}, isTime: {isTimeToSend}, wasNotSent: {wasNotSentToday}");
+
+                // Чи вже було відправлено сьогодні (перевіряємо по локальній даті користувача)
+                bool wasNotSentToday = userSetting.LastNotificationDate.Date < userLocalTime.Date;
+
+                Console.WriteLine($"[DEBUG] User: {userId}, LocalTime: {userLocalTime:HH:mm}, NotifyTime: {userSetting.NotificationTime:hh\\:mm}, isTime: {isTimeToSend}, wasNotSent: {wasNotSentToday}");
 
                 if (isTimeToSend && wasNotSentToday)
                 {
                     Console.WriteLine($"[INFO] Знайдено користувача для розсилки! ID: {userId}. Місцевий час: {userLocalTime:HH:mm}.");
-                    
+
                     try
                     {
                         var weatherReport = await weatherService.GetCurrentWeatherAsync(userSetting.City);
                         if (!weatherReport.StartsWith("Помилка"))
                         {
                             await botClient.SendTextMessageAsync(userId, weatherReport, parseMode: ParseMode.MarkdownV2);
-                            
-                            userSetting.LastNotificationDate = nowUtc;
+
+                            // Зберігаємо дату останнього сповіщення у ЛОКАЛЬНОМУ часі користувача
+                            userSetting.LastNotificationDate = userLocalTime.Date;
                             await SaveSettingsAsync();
-                            
+
                             Console.WriteLine($"[SUCCESS] Сповіщення для {userId} надіслано успішно. Дата збережена.");
                         }
                     }
                     catch (Exception ex)
                     {
-                         Console.WriteLine($"[ERROR] Не вдалося надіслати сповіщення користувачеві {userId}: {ex.Message}");
+                        Console.WriteLine($"[ERROR] Не вдалося надіслати сповіщення користувачеві {userId}: {ex.Message}");
                     }
                 }
             }
         }
-        
+
         public async Task<int> BroadcastMessageAsync(ITelegramBotClient botClient, string message)
         {
             var userIds = _userSettings.Keys.ToList();
