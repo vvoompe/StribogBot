@@ -2,12 +2,29 @@
 
 namespace Stribog
 {
+    /// <summary>
+    /// Модель налаштувань користувача для розсилки прогнозу погоди.
+    /// </summary>
     public class UserSetting
     {
-        public string City { get; set; }
+        /// <summary>
+        /// Місто користувача.
+        /// </summary>
+        public string? City { get; set; }
+
+        /// <summary>
+        /// Час доби, коли користувач хоче отримувати сповіщення.
+        /// </summary>
         public TimeSpan NotificationTime { get; set; }
+
+        /// <summary>
+        /// Зсув від UTC у секундах (часовий пояс користувача).
+        /// </summary>
         public int UtcOffsetSeconds { get; set; }
-        // *** НОВЕ ПОЛЕ: Зберігаємо дату останнього сповіщення ***
+
+        /// <summary>
+        /// Дата останнього відправленого сповіщення (у локальному часі користувача).
+        /// </summary>
         public DateTime LastNotificationDate { get; set; } = DateTime.MinValue;
     }
 }
