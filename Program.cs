@@ -3,9 +3,9 @@ using Telegram.Bot;
 using Telegram.Bot.Polling;
 using Telegram.Bot.Types;
 
-var botToken = Environment.GetEnvironmentVariable("BOT_TOKEN") ?? throw new InvalidOperationException("BOT_TOKEN is not set.");
-var weatherApiKey = Environment.GetEnvironmentVariable("WEATHER_API_KEY") ?? throw new InvalidOperationException("WEATHER_API_KEY is not set.");
-var adminId = Environment.GetEnvironmentVariable("ADMIN_ID") ?? throw new InvalidOperationException("ADMIN_ID is not set.");
+var botToken = Environment.GetEnvironmentVariable("8351856913:AAFpwghkCYm_Y_Q7b97vQbDUsTMp6UxtpW8") ?? throw new InvalidOperationException("BOT_TOKEN is not set.");
+var weatherApiKey = Environment.GetEnvironmentVariable("7c39b15a9902c7fa7d10849aeb538a45") ?? throw new InvalidOperationException("WEATHER_API_KEY is not set.");
+var adminId = Environment.GetEnvironmentVariable("962460578") ?? throw new InvalidOperationException("ADMIN_ID is not set.");
 
 var botClient = new TelegramBotClient(botToken);
 var weatherService = new WeatherService(weatherApiKey);
