@@ -26,41 +26,27 @@ namespace Stribog
         {
             try
             {
-                // Railway може надавати URL у форматі postgres:// або postgresql://
-                if (databaseUrl.StartsWith("postgres://"))
-                {
-                    databaseUrl = databaseUrl.Replace("postgres://", "postgresql://");
-                }
-
-                // Якщо це вже готовий connection string (не URL)
-                if (!databaseUrl.StartsWith("postgresql://"))
-                {
-                    // Можливо це вже connection string у форматі Npgsql
-                    return databaseUrl;
-                }
-
+                // Перетворюємо URL, що надається Railway, на стандартний рядок підключення Npgsql
                 var uri = new Uri(databaseUrl);
                 var userInfo = uri.UserInfo.Split(':');
 
-                if (userInfo.Length != 2)
+                var builder = new NpgsqlConnectionStringBuilder
                 {
-                    throw new InvalidOperationException("Invalid DATABASE_URL format: missing username or password");
-                }
+                    Host = uri.Host,
+                    Port = uri.Port > 0 ? uri.Port : 5432,
+                    Username = userInfo[0],
+                    Password = userInfo[1],
+                    Database = uri.AbsolutePath.TrimStart('/'),
+                    SslMode = SslMode.Require, // Обов'язково для Railway
+                    TrustServerCertificate = true // Довіряти сертифікату сервера
+                };
 
-                var host = uri.Host;
-                var port = uri.Port > 0 ? uri.Port : 5432;
-                var database = uri.AbsolutePath.TrimStart('/');
-                var username = Uri.UnescapeDataString(userInfo[0]);
-                var password = Uri.UnescapeDataString(userInfo[1]);
-
-                // Railway PostgreSQL зазвичай вимагає SSL
-                var connString = $"Host={host};Port={port};Username={username};Password={password};Database={database};SSL Mode=Require;Trust Server Certificate=true";
-
-                return connString;
+                return builder.ConnectionString;
             }
             catch (Exception ex)
             {
-                throw new InvalidOperationException($"Failed to parse DATABASE_URL: {ex.Message}", ex);
+                Console.WriteLine($"[DB ERROR] Помилка розбору DATABASE_URL: {ex.Message}");
+                throw new InvalidOperationException($"Не вдалося розібрати DATABASE_URL.", ex);
             }
         }
 
