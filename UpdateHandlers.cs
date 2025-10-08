@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Telegram.Bot;
@@ -19,7 +20,6 @@ public static class UpdateHandlers
 
     public static async Task HandleUpdateAsync(ITelegramBotClient botClient, Update update, CancellationToken cancellationToken)
     {
-        // CallbackQuery обробляємо першочергово
         if (update.CallbackQuery != null)
         {
             await HandleBroadcastInlineCallback(botClient, update.CallbackQuery, cancellationToken);
@@ -50,7 +50,6 @@ public static class UpdateHandlers
             }
         }
 
-        // Без використання оператора or (для сумісності з більш ранніми версіями C#)
         var action = message.Text switch
         {
             "/start" => HandleStartCommand(botClient, message, cancellationToken),
@@ -63,8 +62,6 @@ public static class UpdateHandlers
         };
         await action;
     }
-
-    // --- Основні командні хендлери ---
 
     private static Task HandleStartCommand(ITelegramBotClient botClient, Message message, CancellationToken cancellationToken)
     {
@@ -81,15 +78,12 @@ public static class UpdateHandlers
     private static async Task HandleWeatherCommand(ITelegramBotClient botClient, Message message, CancellationToken cancellationToken)
     {
         var userSettings = _userSettingsService.GetUserSettings(message.Chat.Id);
-        var city = string.IsNullOrEmpty(userSettings.City) ? null : userSettings.City;
-
-        if (string.IsNullOrEmpty(city))
+        if (string.IsNullOrEmpty(userSettings.City))
         {
             await botClient.SendTextMessageAsync(chatId: message.Chat.Id, text: "Спочатку вкажіть місто.", cancellationToken: cancellationToken);
             return;
         }
 
-        // Інлайн меню з вибором прогнозу
         await botClient.SendTextMessageAsync(
             chatId: message.Chat.Id,
             text: "Оберіть прогноз:",
@@ -109,13 +103,11 @@ public static class UpdateHandlers
         try
         {
             await botClient.SendChatActionAsync(chatId: message.Chat.Id, chatAction: ChatAction.Typing, cancellationToken: cancellationToken);
-            // перевірити місто й отримати коротку перевірку погоди
             await _weatherService.GetWeatherAsync(city);
             var userSettings = _userSettingsService.GetUserSettings(message.Chat.Id);
             userSettings.City = city;
             _userSettingsService.SaveUserSettings(userSettings);
 
-            // Відправити розбитий великий вивід погоди
             string fullWeather = await _weatherService.GetWeatherAsync(city);
             foreach (var chunk in SplitMessage(fullWeather, 4096))
             {
@@ -135,7 +127,6 @@ public static class UpdateHandlers
         var city = message.Text;
         var settings = _userSettingsService.GetUserSettings(message.Chat.Id);
         settings.BroadcastCity = city;
-        // після введення міста - очікуємо час розсилки
         settings.DailyWeatherBroadcast = true;
         _userSettingsService.SaveUserSettings(settings);
 
@@ -152,12 +143,9 @@ public static class UpdateHandlers
             settings.BroadcastTime = timeText;
             _userSettingsService.SaveUserSettings(settings);
             UserStates.Remove(message.Chat.Id);
-            // Без екранування лапок — використати окрему змінну для надійності
+
             var cityDisplay = settings.BroadcastCity ?? settings.City ?? "не вказано";
-            await botClient.SendTextMessageAsync(
-                chatId: message.Chat.Id,
-                text: $"Розсилка встановлена. Місто: {cityDisplay}, час: {timeText}",
-                cancellationToken: cancellationToken);
+            await botClient.SendTextMessageAsync(chatId: message.Chat.Id, text: $"Розсилка встановлена. Місто: {cityDisplay}, час: {timeText}", cancellationToken: cancellationToken);
         }
         else
         {
@@ -170,14 +158,11 @@ public static class UpdateHandlers
         return botClient.SendTextMessageAsync(chatId: message.Chat.Id, text: "Невідома команда.", replyMarkup: GetMainMenu(), cancellationToken: cancellationToken);
     }
 
-    // Виправлена публічна помилка polling
     public static Task HandlePollingErrorAsync(ITelegramBotClient botClient, Exception exception, CancellationToken cancellationToken)
     {
         Console.WriteLine($"[POLLING ERROR] {exception.Message}");
         return Task.CompletedTask;
     }
-
-    // --- Інлайн-меню та callback для розсилок та прогнозів ---
 
     private static async Task HandleBroadcastInlineCallback(ITelegramBotClient botClient, CallbackQuery callback, CancellationToken cancellationToken)
     {
@@ -277,7 +262,7 @@ public static class UpdateHandlers
 
     private static async Task HandleBroadcastCommand(ITelegramBotClient botClient, Message message, CancellationToken cancellationToken)
     {
-        // Відобразити інлайнове меню розсилки
+        // Відобразити інлайн-меню розсилки
         await botClient.SendTextMessageAsync(message.Chat.Id, "Керування розсилкою:", replyMarkup: GetBroadcastInlineMenu(), cancellationToken: cancellationToken);
     }
 
@@ -286,7 +271,6 @@ public static class UpdateHandlers
         await Task.CompletedTask;
     }
 
-    // Списки утиліт
     private static IEnumerable<string> SplitMessage(string text, int maxLength = 4096)
     {
         if (string.IsNullOrEmpty(text)) yield break;
@@ -299,7 +283,6 @@ public static class UpdateHandlers
         new KeyboardButton[] { "⛅️ Дізнатись погоду", "⚙️ Вказати місто" , "📯 Розсилки" }
     }) { ResizeKeyboard = true };
 
-    // Інлайн-меню керування погодою
     private static InlineKeyboardMarkup GetWeatherInlineMenu() => new(new[]
     {
         new[]
@@ -309,7 +292,6 @@ public static class UpdateHandlers
         }
     });
 
-    // Інлайн-меню керування розсилками
     private static InlineKeyboardMarkup GetBroadcastInlineMenu() => new(new[]
     {
         new[]

@@ -1,13 +1,13 @@
-﻿﻿using Stribog;
+﻿using Stribog;
 using Telegram.Bot;
-using System.Globalization;
+using System.Threading;
 
-// --- 1. Отримання налаштувань зі змінних оточення ---
+// --- 1) Отримання налаштувань зі змінних оточення ---
 var botToken = Environment.GetEnvironmentVariable("TELEGRAM_BOT_TOKEN");
 var adminChatId = Environment.GetEnvironmentVariable("ADMIN_CHAT_ID");
 var weatherApiKey = Environment.GetEnvironmentVariable("OPENWEATHERMAP_API_KEY");
 
-// --- 2. Перевірка, чи всі необхідні змінні встановлені ---
+// --- 2) Перевірка змінних ---
 if (string.IsNullOrEmpty(botToken) || string.IsNullOrEmpty(weatherApiKey))
 {
     Console.WriteLine("[FATAL ERROR] Не всі змінні оточення встановлено!");
@@ -18,7 +18,7 @@ if (string.IsNullOrEmpty(botToken) || string.IsNullOrEmpty(weatherApiKey))
 var botClient = new TelegramBotClient(botToken);
 using var cts = new CancellationTokenSource();
 
-// --- 3. Запуск бота ---
+// --- 3) Запуск бота ---
 botClient.StartReceiving(
     updateHandler: UpdateHandlers.HandleUpdateAsync,
     pollingErrorHandler: UpdateHandlers.HandlePollingErrorAsync,
@@ -28,7 +28,7 @@ botClient.StartReceiving(
 var me = await botClient.GetMeAsync(cancellationToken: cts.Token);
 Console.WriteLine($"Бот {me.Username} успішно запущений.");
 
-// --- 4. Сповіщення адміна про запуск (якщо вказано ID) ---
+// --- 4. Сповіщення адміністратору (якщо задано) ---
 if (!string.IsNullOrEmpty(adminChatId))
 {
     try
@@ -38,7 +38,7 @@ if (!string.IsNullOrEmpty(adminChatId))
             text: $"✅ Бот *{me.Username}* успішно запущений!\nЧас: {DateTime.Now:g}",
             parseMode: Telegram.Bot.Types.Enums.ParseMode.Markdown,
             cancellationToken: cts.Token);
-        Console.WriteLine($"Сповіщення про запуск надіслано адміну.");
+        Console.WriteLine($"Сповіщення адміну надіслано.");
     }
     catch (Exception ex)
     {
@@ -46,10 +46,9 @@ if (!string.IsNullOrEmpty(adminChatId))
     }
 }
 
-// --- 5. Розсилка розкладу (планувальник) ---
-var settingsService = new UserSettingsService();
-var broadcastScheduler = new BroadcastScheduler(botClient, settingsService);
-_ = broadcastScheduler.RunAsync(cts.Token); // запускаємо у фоновому режимі
+// --- 5) Запуск розсилок як фонове завдання (Scheduler) ---
+var scheduler = new Stribog.BroadcastScheduler(botClient, new UserSettingsService());
+Task.Run(async () => await scheduler.RunAsync(cts.Token));
 
-// --- 6. Фонове очікування завершення програми ---
+// --- 6) Очікування завершення ---
 await Task.Delay(-1, cts.Token);
