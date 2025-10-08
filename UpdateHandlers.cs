@@ -88,7 +88,16 @@ public static class UpdateHandlers
         {
             await botClient.SendChatActionAsync(chatId: message.Chat.Id, chatAction: ChatAction.Typing, cancellationToken: cancellationToken);
             var weatherInfo = await _weatherService.GetWeatherAsync(city);
-            await botClient.SendTextMessageAsync(chatId: message.Chat.Id, text: weatherInfo, parseMode: ParseMode.Markdown, cancellationToken: cancellationToken);
+
+            // Розділяємо повідомлення на частини, щоб уникнути помилки довжини
+            foreach (var chunk in SplitMessage(weatherInfo, 4096))
+            {
+                await botClient.SendTextMessageAsync(
+                    chatId: message.Chat.Id,
+                    text: chunk,
+                    parseMode: ParseMode.Markdown,
+                    cancellationToken: cancellationToken);
+            }
         }
         catch (Exception ex)
         {
@@ -96,6 +105,7 @@ public static class UpdateHandlers
             await botClient.SendTextMessageAsync(chatId: message.Chat.Id, text: $"Не вдалося знайти місто '{city}'.", cancellationToken: cancellationToken);
         }
     }
+
 
     private static Task HandleSetCityCommand(ITelegramBotClient botClient, Message message, CancellationToken cancellationToken)
     {
@@ -231,6 +241,14 @@ public static class UpdateHandlers
         // Відображаємо інлайнове меню керування розсилкою
         await botClient.SendTextMessageAsync(message.Chat.Id, "Керування розсилкою:", replyMarkup: GetBroadcastInlineMenu(), cancellationToken: cancellationToken);
     }
+    // Новий helper: розділяємо текст на chunks до maxLength (по 4096 символів)
+    private static IEnumerable<string> SplitMessage(string text, int maxLength = 4096)
+    {
+        if (string.IsNullOrEmpty(text)) yield break;
+        for (int i = 0; i < text.Length; i += maxLength)
+            yield return text.Substring(i, Math.Min(maxLength, text.Length - i));
+    }
+
 
     private static async Task HandleCityInputInline(ITelegramBotClient botClient, Message message, CancellationToken cancellationToken)
     {
