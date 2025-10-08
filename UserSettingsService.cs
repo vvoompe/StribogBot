@@ -1,5 +1,9 @@
-﻿using Npgsql;
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
 using Dapper;
+using Npgsql;
+
 namespace Stribog;
 
 public class UserSettingsService
@@ -8,8 +12,18 @@ public class UserSettingsService
 
     public UserSettingsService()
     {
-        _connectionString = Environment.GetEnvironmentVariable("DATABASE_URL")
-                            ?? throw new InvalidOperationException("DATABASE_URL not set");
+        var rawUrl = Environment.GetEnvironmentVariable("DATABASE_URL")
+            ?? throw new InvalidOperationException("DATABASE_URL not set");
+
+        _connectionString = BuildConnectionString(rawUrl);
+    }
+
+    private static string BuildConnectionString(string databaseUrl)
+    {
+        var uri = new Uri(databaseUrl);
+        var userInfo = uri.UserInfo.Split(':');
+
+        return $"Host={uri.Host};Port={uri.Port};Username={userInfo[0]};Password={userInfo[1]};Database={uri.AbsolutePath.TrimStart('/')};SSL Mode=Require;Trust Server Certificate=true";
     }
 
     public UserSetting GetUserSettings(long chatId)
