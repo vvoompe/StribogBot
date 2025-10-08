@@ -54,10 +54,13 @@ namespace Stribog
 
             var cityName = data.SelectToken("name")?.ToString() ?? city;
             var country = data.SelectToken("sys.country")?.ToString() ?? "";
+            
+            // ВИПРАВЛЕНО: Використовуємо часовий пояс міста
+            var cityTime = DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromSeconds(timezoneOffset));
 
             var sb = new StringBuilder();
             sb.AppendLine($"*Погода в місті {cityName}, {country}*");
-            sb.AppendLine($"_{DateTime.Now:dd MMMM, HH:mm}_");
+            sb.AppendLine($"_{cityTime:dd MMMM, HH:mm}_");
             sb.AppendLine();
             sb.AppendLine($"🔹 *Зараз:* {char.ToUpper(description[0]) + description.Substring(1)}");
             sb.AppendLine($"🌡️ *Температура:* {temp:+#.#;-#.#;0}°C (відчувається як {feelsLike:+#.#;-#.#;0}°C)");
@@ -91,20 +94,20 @@ namespace Stribog
             var cityName = forecastData["city"]["name"].ToString();
             var country = forecastData["city"]["country"].ToString();
             var offset = forecastData["city"]["timezone"].Value<int>();
+            var cityTime = DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromSeconds(offset));
 
             var sb = new StringBuilder();
             sb.AppendLine($"*Прогноз на сьогодні для міста {cityName}, {country}*");
-            sb.AppendLine($"_{DateTime.Now:dd MMMM, dddd}_");
+            sb.AppendLine($"_{cityTime:dd MMMM, dddd}_");
             sb.AppendLine();
 
             var list = forecastData["list"] as JArray;
             if (list != null)
             {
-                var nowCity = DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromSeconds(offset)).DateTime;
                 var todayForecasts = list.Where(item =>
                 {
                     var localTime = DateTimeOffset.FromUnixTimeSeconds(item["dt"].Value<long>()).ToOffset(TimeSpan.FromSeconds(offset)).DateTime;
-                    return localTime.Date == nowCity.Date;
+                    return localTime.Date == cityTime.Date;
                 });
                 
                 if (!todayForecasts.Any())
@@ -131,11 +134,60 @@ namespace Stribog
             return sb.ToString();
         }
 
+        // НОВИЙ МЕТОД: Прогноз на 5 днів
+        public async Task<string> GetFiveDayForecastAsync(string city)
+        {
+            var forecastUrl = $"https://api.openweathermap.org/data/2.5/forecast?q={city}&appid={_apiKey}&units=metric&lang=ua";
+            var response = await _httpClient.GetAsync(forecastUrl);
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new Exception("Не вдалося отримати прогноз на 5 днів.");
+            }
+
+            var json = await response.Content.ReadAsStringAsync();
+            var data = JObject.Parse(json);
+
+            var cityName = data["city"]["name"].ToString();
+            var country = data["city"]["country"].ToString();
+            var offset = data["city"]["timezone"].Value<int>();
+
+            var sb = new StringBuilder();
+            sb.AppendLine($"*Прогноз погоди на 5 днів у місті {cityName}, {country}*");
+            sb.AppendLine();
+            
+            var culture = new CultureInfo("uk-UA");
+            
+            var forecastsByDay = (data["list"] as JArray)
+                .GroupBy(item => DateTimeOffset.FromUnixTimeSeconds(item["dt"].Value<long>()).ToOffset(TimeSpan.FromSeconds(offset)).Date)
+                .Take(5);
+
+            foreach (var day in forecastsByDay)
+            {
+                var date = day.Key;
+                var dayOfWeek = culture.DateTimeFormat.GetDayName(date.DayOfWeek);
+                var minTemp = day.Min(item => item["main"]["temp_min"].Value<double>());
+                var maxTemp = day.Max(item => item["main"]["temp_max"].Value<double>());
+                
+                // Опис погоди беремо з прогнозу на середину дня (близько 12:00)
+                var midDayForecast = day.OrderBy(item => Math.Abs(item["dt_txt"].Value<string>().Substring(11, 2) == "12" ? 0 : 1)).First();
+                var description = midDayForecast["weather"][0]["description"].ToString();
+                var pop = midDayForecast["pop"]?.Value<double>() ?? 0;
+                var emoji = GetWeatherEmoji(description, pop);
+                
+                sb.AppendLine($"*🗓️ {date:dd MMMM}, {char.ToUpper(dayOfWeek[0]) + dayOfWeek.Substring(1)}*");
+                sb.AppendLine($"   {emoji} {char.ToUpper(description[0]) + description.Substring(1)}");
+                sb.AppendLine($"   🌡️ Температура: від {minTemp:+#.#;-#.#;0}°C до {maxTemp:+#.#;-#.#;0}°C");
+                sb.AppendLine();
+            }
+
+            return sb.ToString();
+        }
+
         private string GetWeatherEmoji(string description, double pop)
         {
             var baseDesc = description.ToLower();
             if (baseDesc.Contains("гроза")) return "⛈️";
-            if (pop > 0.1) return "🌧️"; // Збільшено поріг для дощу
+            if (pop > 0.1) return "🌧️";
             if (baseDesc.Contains("дощ") || baseDesc.Contains("мряка")) return "💧";
             if (baseDesc.Contains("сніг")) return "❄️";
             if (baseDesc.Contains("хмар")) return "☁️";

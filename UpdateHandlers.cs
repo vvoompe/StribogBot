@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Telegram.Bot;
+using Telegram.Bot.Exceptions;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
@@ -99,7 +100,6 @@ namespace Stribog
             var chatId = message.Chat.Id;
             try
             {
-                // ВИПРАВЛЕНО: Використання правильної назви параметра chatAction
                 await botClient.SendChatActionAsync(chatId: chatId, chatAction: ChatAction.Typing, cancellationToken: cancellationToken);
                 
                 await _weatherService.GetWeatherAsync(city); 
@@ -256,11 +256,20 @@ namespace Stribog
         {
             try
             {
-                // ВИПРАВЛЕНО: Використання правильної назви параметра chatAction
                 await botClient.SendChatActionAsync(chatId: chatId, chatAction: ChatAction.Typing, cancellationToken: cancellationToken);
-                string weatherReport = type == "today"
-                    ? await _weatherService.GetTodayForecastAsync(city)
-                    : await _weatherService.GetWeatherAsync(city);
+                string weatherReport;
+                switch (type)
+                {
+                    case "today":
+                        weatherReport = await _weatherService.GetTodayForecastAsync(city);
+                        break;
+                    case "5day":
+                        weatherReport = await _weatherService.GetFiveDayForecastAsync(city);
+                        break;
+                    default:
+                        weatherReport = await _weatherService.GetWeatherAsync(city);
+                        break;
+                }
 
                 var markup = new InlineKeyboardMarkup(new[]
                 {
@@ -276,6 +285,11 @@ namespace Stribog
                 {
                      await botClient.SendTextMessageAsync(chatId: chatId, text: weatherReport, parseMode: ParseMode.Markdown, replyMarkup: markup, cancellationToken: cancellationToken);
                 }
+            }
+            // ВИПРАВЛЕНО: Обробка помилки "message is not modified"
+            catch (ApiRequestException ex) when (ex.Message.Contains("message is not modified"))
+            {
+                // Просто ігноруємо помилку, якщо повідомлення не змінилося
             }
             catch (Exception ex)
             {
@@ -363,7 +377,11 @@ namespace Stribog
             new[]
             {
                 InlineKeyboardButton.WithCallbackData("Сьогодні", $"weather_get_today_{city}"),
-                InlineKeyboardButton.WithCallbackData("Зараз (детально)", $"weather_get_current_{city}"),
+                InlineKeyboardButton.WithCallbackData("На 5 днів", $"weather_get_5day_{city}"),
+            },
+            new[]
+            {
+                InlineKeyboardButton.WithCallbackData("Зараз (детально)", $"weather_get_current_{city}")
             },
             new[] { InlineKeyboardButton.WithCallbackData("⬅️ Назад до головного меню", "main_menu") }
         });
