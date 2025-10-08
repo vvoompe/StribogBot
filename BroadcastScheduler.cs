@@ -38,29 +38,39 @@ namespace Stribog
                             continue;
                         }
 
-                        // Отримуємо часовий пояс користувача, за замовчуванням - UTC
+                        // --- ЛОГУВАННЯ: Початок перевірки для користувача ---
+                        Console.WriteLine($"[SCHEDULER] Checking user {user.ChatId} with broadcast time {user.BroadcastTime}");
+
                         TimeZoneInfo userTimeZone;
                         try
                         {
-                            // Використовуємо TimeZoneConverter для сумісності між Windows та IANA ID
                             userTimeZone = TZConvert.GetTimeZoneInfo(user.TimeZoneId ?? "UTC");
                         }
                         catch
                         {
-                            userTimeZone = TimeZoneInfo.Utc; // Якщо вказано невірний ID, повертаємось до UTC
+                            userTimeZone = TimeZoneInfo.Utc;
+                            Console.WriteLine($"[SCHEDULER] User {user.ChatId} has invalid TimeZoneId. Defaulting to UTC.");
                         }
 
-                        // Конвертуємо поточний час UTC в локальний час користувача
-                        var nowInUserTz = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, userTimeZone);
+                        var utcNow = DateTime.UtcNow;
+                        var nowInUserTz = TimeZoneInfo.ConvertTimeFromUtc(utcNow, userTimeZone);
                         
-                        // Перевіряємо, чи настав час для розсилки В ЛОКАЛЬНОМУ ЧАСІ користувача
+                        // --- ЛОГУВАННЯ: Час ---
+                        Console.WriteLine($"[SCHEDULER] UTC time: {utcNow:HH:mm:ss}. User's local time ({userTimeZone.Id}): {nowInUserTz:HH:mm:ss}");
+
                         if (nowInUserTz.TimeOfDay >= localBroadcastTime)
                         {
-                            // Перевіряємо, чи ми вже надсилали розсилку цьому користувачу СЬОГОДНІ за його локальним часом
                             if (!_lastBroadcastSent.TryGetValue(user.ChatId, out var lastSent) || lastSent.Date < nowInUserTz.Date)
                             {
+                                // --- ЛОГУВАННЯ: Надсилання розсилки ---
+                                Console.WriteLine($"[SCHEDULER] Sending broadcast to user {user.ChatId}. Reason: Time matched and not sent today.");
+                                
                                 var cityToUse = !string.IsNullOrEmpty(user.BroadcastCity) ? user.BroadcastCity : user.City;
-                                if (string.IsNullOrEmpty(cityToUse)) continue;
+                                if (string.IsNullOrEmpty(cityToUse))
+                                {
+                                    Console.WriteLine($"[SCHEDULER] Skipping user {user.ChatId}: city not set.");
+                                    continue;
+                                }
 
                                 string weatherInfo = await _weatherService.GetWeatherAsync(cityToUse);
                                 await _botClient.SendTextMessageAsync(
@@ -69,9 +79,19 @@ namespace Stribog
                                     parseMode: Telegram.Bot.Types.Enums.ParseMode.Markdown,
                                     cancellationToken: cancellationToken);
                                 
-                                // Оновлюємо час останньої розсилки, зберігаючи час UTC
-                                _lastBroadcastSent[user.ChatId] = DateTime.UtcNow;
+                                _lastBroadcastSent[user.ChatId] = utcNow;
+                                Console.WriteLine($"[SCHEDULER] Broadcast sent successfully to {user.ChatId}.");
                             }
+                            else
+                            {
+                                // --- ЛОГУВАННЯ: Пропуск (вже надіслано) ---
+                                Console.WriteLine($"[SCHEDULER] Skipping user {user.ChatId}. Reason: Already sent today.");
+                            }
+                        }
+                        else
+                        {
+                            // --- ЛОГУВАННЯ: Пропуск (ще не час) ---
+                            Console.WriteLine($"[SCHEDULER] Skipping user {user.ChatId}. Reason: It's not time yet ({nowInUserTz.TimeOfDay} < {localBroadcastTime}).");
                         }
                     }
                 }
