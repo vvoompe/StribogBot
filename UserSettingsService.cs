@@ -1,64 +1,123 @@
-﻿﻿// PetProjects/UserSettingsService.cs
+﻿using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using Newtonsoft.Json;
+using Dapper;
+using Npgsql;
 
-namespace Stribog;
-
-public class UserSettingsService
+namespace Stribog
 {
-    private readonly string _filePath;
-
-    public UserSettingsService()
+    public class UserSettingsService
     {
-        string dataDirectory = Path.Combine(AppContext.BaseDirectory, "Data");
-        if (!Directory.Exists(dataDirectory))
-        {
-            Directory.CreateDirectory(dataDirectory);
-        }
-        _filePath = Path.Combine(dataDirectory, "usersettings.json");
-    }
+        private readonly string _connectionString;
 
-    public UserSetting GetUserSettings(long chatId)
-    {
-        if (!File.Exists(_filePath)) return new UserSetting { ChatId = chatId };
-        var json = File.ReadAllText(_filePath);
-        var settings = JsonConvert.DeserializeObject<List<UserSetting>>(json) ?? new List<UserSetting>();
-        return settings.FirstOrDefault(s => s.ChatId == chatId) ?? new UserSetting { ChatId = chatId };
-    }
+        public UserSettingsService()
+        {
+            var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL");
+            
+            if (string.IsNullOrEmpty(databaseUrl))
+            {
+                throw new InvalidOperationException("DATABASE_URL not set");
+            }
 
-    public void SaveUserSettings(UserSetting settingToSave)
-    {
-        var settings = new List<UserSetting>();
-        if (File.Exists(_filePath))
-        {
-            var json = File.ReadAllText(_filePath);
-            settings = JsonConvert.DeserializeObject<List<UserSetting>>(json) ?? new List<UserSetting>();
-        }
-        var existingSetting = settings.FirstOrDefault(s => s.ChatId == settingToSave.ChatId);
-        if (existingSetting != null)
-        {
-            existingSetting.City = settingToSave.City ?? existingSetting.City;
-            existingSetting.BroadcastCity = settingToSave.BroadcastCity ?? existingSetting.BroadcastCity;
-            existingSetting.BroadcastTime = settingToSave.BroadcastTime ?? existingSetting.BroadcastTime;
-            existingSetting.DailyWeatherBroadcast = settingToSave.DailyWeatherBroadcast;
-            // Нове: TZ
-            existingSetting.TimeZoneId = settingToSave.TimeZoneId ?? existingSetting.TimeZoneId;
-        }
-        else
-        {
-            settings.Add(settingToSave);
+            _connectionString = BuildConnectionString(databaseUrl);
         }
 
-        var newJson = JsonConvert.SerializeObject(settings, Formatting.Indented);
-        File.WriteAllText(_filePath, newJson);
-    }
+        private static string BuildConnectionString(string databaseUrl)
+        {
+            try
+            {
+                // Railway може надавати URL у форматі postgres:// або postgresql://
+                if (databaseUrl.StartsWith("postgres://"))
+                {
+                    databaseUrl = databaseUrl.Replace("postgres://", "postgresql://");
+                }
 
-    public List<UserSetting> GetAllSettings()
-    {
-        if (!File.Exists(_filePath)) return new List<UserSetting>();
-        var json = File.ReadAllText(_filePath);
-        return JsonConvert.DeserializeObject<List<UserSetting>>(json) ?? new List<UserSetting>();
+                // Якщо це вже готовий connection string (не URL)
+                if (!databaseUrl.StartsWith("postgresql://"))
+                {
+                    // Можливо це вже connection string у форматі Npgsql
+                    return databaseUrl;
+                }
+
+                var uri = new Uri(databaseUrl);
+                var userInfo = uri.UserInfo.Split(':');
+
+                if (userInfo.Length != 2)
+                {
+                    throw new InvalidOperationException("Invalid DATABASE_URL format: missing username or password");
+                }
+
+                var host = uri.Host;
+                var port = uri.Port > 0 ? uri.Port : 5432;
+                var database = uri.AbsolutePath.TrimStart('/');
+                var username = Uri.UnescapeDataString(userInfo[0]);
+                var password = Uri.UnescapeDataString(userInfo[1]);
+
+                // Railway PostgreSQL зазвичай вимагає SSL
+                var connString = $"Host={host};Port={port};Username={username};Password={password};Database={database};SSL Mode=Require;Trust Server Certificate=true";
+
+                return connString;
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException($"Failed to parse DATABASE_URL: {ex.Message}", ex);
+            }
+        }
+
+        public UserSetting GetUserSettings(long chatId)
+        {
+            try
+            {
+                using var conn = new NpgsqlConnection(_connectionString);
+                var result = conn.QueryFirstOrDefault<UserSetting>(
+                    "SELECT * FROM usersettings WHERE chatid = @chatId",
+                    new { chatId });
+                
+                return result ?? new UserSetting { ChatId = chatId };
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error getting user settings for {chatId}: {ex.Message}");
+                return new UserSetting { ChatId = chatId };
+            }
+        }
+
+        public void SaveUserSettings(UserSetting setting)
+        {
+            try
+            {
+                using var conn = new NpgsqlConnection(_connectionString);
+                conn.Execute(@"
+                    INSERT INTO usersettings (chatid, city, dailyweatherbroadcast, broadcastcity, broadcasttime, timezoneid)
+                    VALUES (@ChatId, @City, @DailyWeatherBroadcast, @BroadcastCity, @BroadcastTime, @TimeZoneId)
+                    ON CONFLICT (chatid) DO UPDATE SET
+                        city = EXCLUDED.city,
+                        dailyweatherbroadcast = EXCLUDED.dailyweatherbroadcast,
+                        broadcastcity = EXCLUDED.broadcastcity,
+                        broadcasttime = EXCLUDED.broadcasttime,
+                        timezoneid = EXCLUDED.timezoneid,
+                        updatedat = CURRENT_TIMESTAMP;",
+                    setting);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error saving user settings for {setting.ChatId}: {ex.Message}");
+                throw;
+            }
+        }
+
+        public List<UserSetting> GetAllSettings()
+        {
+            try
+            {
+                using var conn = new NpgsqlConnection(_connectionString);
+                return conn.Query<UserSetting>("SELECT * FROM usersettings WHERE dailyweatherbroadcast = TRUE").ToList();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error getting all settings: {ex.Message}");
+                return new List<UserSetting>();
+            }
+        }
     }
 }
