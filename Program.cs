@@ -1,34 +1,48 @@
 ﻿using Stribog;
 using Telegram.Bot;
-using Telegram.Bot.Polling;
-using Telegram.Bot.Types;
 
-var botToken = Environment.GetEnvironmentVariable("8351856913:AAFpwghkCYm_Y_Q7b97vQbDUsTMp6UxtpW8") ?? throw new InvalidOperationException("BOT_TOKEN is not set.");
-var weatherApiKey = Environment.GetEnvironmentVariable("7c39b15a9902c7fa7d10849aeb538a45") ?? throw new InvalidOperationException("WEATHER_API_KEY is not set.");
-var adminId = Environment.GetEnvironmentVariable("962460578") ?? throw new InvalidOperationException("ADMIN_ID is not set.");
+// --- 1. Отримання налаштувань зі змінних оточення ---
+var botToken = Environment.GetEnvironmentVariable("TELEGRAM_BOT_TOKEN");
+var adminChatId = Environment.GetEnvironmentVariable("ADMIN_CHAT_ID");
+var weatherApiKey = Environment.GetEnvironmentVariable("OPENWEATHERMAP_API_KEY");
+
+// --- 2. Перевірка, чи всі необхідні змінні встановлені ---
+if (string.IsNullOrEmpty(botToken) || string.IsNullOrEmpty(weatherApiKey))
+{
+    Console.WriteLine("[FATAL ERROR] Не всі змінні оточення встановлено!");
+    Console.WriteLine("Перевірте наявність: TELEGRAM_BOT_TOKEN, OPENWEATHERMAP_API_KEY");
+    return;
+}
 
 var botClient = new TelegramBotClient(botToken);
-var weatherService = new WeatherService(weatherApiKey);
-var userSettingsService = new UserSettingsService("users.json");
-var updateHandlers = new UpdateHandlers(weatherService, userSettingsService, adminId);
-
 using var cts = new CancellationTokenSource();
 
-var receiverOptions = new ReceiverOptions
-{
-    AllowedUpdates = { }
-};
-
-// ВИПРАВЛЕНО: Повертаємо правильні імена параметрів
+// --- 3. Запуск бота ---
 botClient.StartReceiving(
-    updateHandler: updateHandlers.HandleUpdateAsync,
-    pollingErrorHandler: updateHandlers.HandlePollingErrorAsync,
-    receiverOptions: receiverOptions,
+    updateHandler: UpdateHandlers.HandleUpdateAsync,
+    pollingErrorHandler: UpdateHandlers.HandlePollingErrorAsync,
     cancellationToken: cts.Token
 );
 
-var me = await botClient.GetMeAsync();
-Console.WriteLine($"Бот @{me.Username} запущений.");
-Console.ReadLine();
+var me = await botClient.GetMeAsync(cancellationToken: cts.Token);
+Console.WriteLine($"Бот {me.Username} успішно запущений.");
 
-cts.Cancel();
+// --- 4. Сповіщення адміна про запуск (якщо вказано ID) ---
+if (!string.IsNullOrEmpty(adminChatId))
+{
+    try
+    {
+        await botClient.SendTextMessageAsync(
+            chatId: adminChatId,
+            text: $"✅ Бот *{me.Username}* успішно запущений!\nЧас: {DateTime.Now:g}",
+            parseMode: Telegram.Bot.Types.Enums.ParseMode.Markdown,
+            cancellationToken: cts.Token);
+        Console.WriteLine($"Сповіщення про запуск надіслано адміну.");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[ERROR] Не вдалося надіслати сповіщення адміну: {ex.Message}");
+    }
+}
+
+await Task.Delay(-1, cts.Token);

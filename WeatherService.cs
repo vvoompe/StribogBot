@@ -1,177 +1,107 @@
 ﻿using System;
-using System.Globalization;
-using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 
-namespace Stribog
+namespace Stribog;
+
+public class WeatherService
 {
-    public class WeatherService
+    private readonly HttpClient _httpClient;
+    private readonly string _apiKey;
+
+    public WeatherService()
     {
-        private readonly HttpClient _httpClient = new();
-        private readonly string _apiKey;
-
-        public WeatherService(string apiKey)
+        _httpClient = new HttpClient();
+        _apiKey = Environment.GetEnvironmentVariable("OPENWEATHERMAP_API_KEY");
+        if (string.IsNullOrEmpty(_apiKey))
         {
-            _apiKey = apiKey;
+            throw new InvalidOperationException("API ключ для OpenWeatherMap не встановлено.");
+        }
+    }
+
+    public async Task<string> GetWeatherAsync(string city)
+    {
+        var requestUrl = $"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={_apiKey}&units=metric&lang=ua";
+        var response = await _httpClient.GetAsync(requestUrl);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new Exception("На жаль, не вдалося отримати дані про погоду для цього міста.");
         }
 
-        public async Task<string> GetCurrentWeatherAsync(string city)
+        var json = await response.Content.ReadAsStringAsync();
+        var data = JObject.Parse(json);
+
+        // --- Парсинг даних ---
+        var description = data["weather"][0]["description"].ToString();
+        var temp = data["main"]["temp"].Value<double>();
+        var humidity = data["main"]["humidity"].Value<int>();
+        var windSpeed = data["wind"]["speed"].Value<double>();
+
+        // --- Формування повідомлення ---
+        var result = new StringBuilder();
+        result.AppendLine($"*Погода в місті {data["name"]}, {data["sys"]["country"]}*");
+        result.AppendLine($"*{char.ToUpper(description[0]) + description.Substring(1)}*");
+        result.AppendLine();
+        result.AppendLine($"🌡️ *Температура*: {data["main"]["temp"]:F1}°C (відчувається як {data["main"]["feels_like"]:F1}°C)");
+        result.AppendLine($"💨 *Вітер*: {data["wind"]["speed"]:F1} м/с");
+        result.AppendLine($"💧 *Вологість*: {data["main"]["humidity"]}%");
+        result.AppendLine();
+        result.AppendLine($"💡 *Наша порада*: {GetWeatherAdvice(temp, humidity, windSpeed, description)}");
+        result.AppendLine();
+        result.AppendLine("_Бажаю Вам гарного дня!_");
+
+        return result.ToString();
+    }
+
+    /// <summary>
+    /// Генерує ввічливу та детальну пораду на основі погодних умов.
+    /// </summary>
+    private string GetWeatherAdvice(double temp, int humidity, double windSpeed, string description)
+    {
+        // --- Спочатку реагуємо на опади ---
+        if (description.Contains("гроза"))
         {
-            try
-            {
-                string url = $"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={_apiKey}&units=metric&lang=ua";
-                var response = await _httpClient.GetStringAsync(url);
-                var json = JObject.Parse(response);
-
-                var description = json["weather"]![0]!["description"]!.ToString();
-                var temp = (int)Math.Round(json["main"]!["temp"]!.Value<double>());
-                var feelsLike = (int)Math.Round(json["main"]!["feels_like"]!.Value<double>());
-                var wind = json["wind"]!["speed"]!.Value<double>();
-                var country = json["sys"]!["country"]!.ToString();
-                var cityName = json["name"]!.ToString();
-
-                var report = $"Погода в *{cityName}, {country}*:\n" +
-                             $"{CapitalizeFirstLetter(description)}, температура *{temp}°C* (відчувається як *{feelsLike}°C*)\n" +
-                             $"Швидкість вітру: {wind:F1} м/с";
-
-                return report;
-            }
-            catch (Exception)
-            {
-                // ВИПРАВЛЕНО: Одинарний \ замінено на подвійний \\
-                return $"Не вдалося знайти місто '{city}'\\.";
-            }
+            return "Будь ласка, будьте особливо обережні. Радимо утриматися від виходу на вулицю без нагальної потреби.";
         }
-        
-        public async Task<string> GetEveningForecastAsync(string city)
+        if (description.Contains("дощ") || description.Contains("мряка"))
         {
-            try
-            {
-                string url = $"https://api.openweathermap.org/data/2.5/forecast?q={city}&appid={_apiKey}&units=metric&lang=ua";
-                var response = await _httpClient.GetStringAsync(url);
-                var json = JObject.Parse(response);
-
-                var sb = new StringBuilder();
-                var cityName = json["city"]!["name"]!.ToString();
-                sb.AppendLine($"*Прогноз до вечора для міста {cityName}*:");
-
-                var forecasts = json["list"]!.Take(4);
-                foreach (var forecast in forecasts)
-                {
-                    var time = DateTimeOffset.FromUnixTimeSeconds(forecast["dt"]!.Value<long>()).LocalDateTime;
-                    var temp = (int)Math.Round(forecast["main"]!["temp"]!.Value<double>());
-                    var description = forecast["weather"]![0]!["description"]!.ToString();
-                    sb.AppendLine($"*- {time:HH:mm}:* {temp}°C, {description}");
-                }
-                
-                return sb.ToString();
-            }
-            catch (Exception)
-            {
-                // ВИПРАВЛЕНО: Одинарний \ замінено на подвійний \\
-                return $"Не вдалося отримати прогноз на вечір для '{city}'\\.";
-            }
+            return "Схоже, що сьогодні знадобиться парасолька. Не забудьте її, виходячи з дому.";
+        }
+        if (description.Contains("сніг"))
+        {
+            return "Падає сніг! Будь ласка, вдягайтеся тепліше та оберіть взуття, що не ковзає.";
         }
 
-        public async Task<string> GetForecastAsync(string city)
+        // --- Потім на температуру ---
+        if (temp > 30)
         {
-            try
-            {
-                string url = $"https://api.openweathermap.org/data/2.5/forecast?q={city}&appid={_apiKey}&units=metric&lang=ua";
-                var response = await _httpClient.GetStringAsync(url);
-                var json = JObject.Parse(response);
-
-                var sb = new StringBuilder();
-                var cityName = json["city"]!["name"]!.ToString();
-                sb.AppendLine($"*Прогноз на 5 днів для міста {cityName}*:");
-                
-                var dailyForecasts = json["list"]!
-                    .GroupBy(f => DateTimeOffset.FromUnixTimeSeconds(f["dt"]!.Value<long>()).LocalDateTime.Date)
-                    .Select(g =>
-                    {
-                        var dayTemp = g.Max(f => f["main"]!["temp_max"]!.Value<double>());
-                        var nightTemp = g.Min(f => f["main"]!["temp_min"]!.Value<double>());
-                        var description = g.First()["weather"]![0]!["description"]!.ToString();
-                        return new
-                        {
-                            Date = g.Key,
-                            DayTemp = (int)Math.Round(dayTemp),
-                            NightTemp = (int)Math.Round(nightTemp),
-                            Description = description
-                        };
-                    })
-                    .Take(5);
-
-                foreach (var day in dailyForecasts)
-                {
-                    sb.AppendLine($"*- {day.Date:dd.MM} ({ToTitleCase(day.Date.ToString("dddd", new CultureInfo("uk-UA")))}):*");
-                    sb.AppendLine($"  Вдень: *{day.DayTemp}°C*, вночі: *{day.NightTemp}°C*, {day.Description}");
-                }
-
-                return sb.ToString();
-            }
-            catch (Exception)
-            {
-                // ВИПРАВЛЕНО: Одинарний \ замінено на подвійний \\
-                return $"Не вдалося отримати прогноз на 5 днів для '{city}'\\.";
-            }
+            return "Сьогодні дуже спекотно. Будь ласка, пийте більше води та намагайтеся перебувати в тіні.";
+        }
+        if (temp > 22)
+        {
+            return "Чудова тепла погода! Це гарна нагода для прогулянки, але не забувайте про головний убір.";
+        }
+        if (temp < 5 && temp >= 0)
+        {
+            return "Надворі досить прохолодно. Рекомендуємо вдягнути теплу куртку, щоб не змерзнути.";
+        }
+        if (temp < 0)
+        {
+            return "Обережно, мороз! Будь ласка, вдягайтеся якомога тепліше, не забудьте про рукавички та шапку.";
         }
 
-        public string SanitizeMarkdown(string text)
+        // --- Додаткові поради щодо вітру та вологості ---
+        if (windSpeed > 12)
         {
-            var escapeChars = new[] { "_", "*", "[", "]", "(", ")", "~", "`", ">", "#", "+", "-", "=", "|", "{", "}", ".", "!" };
-            var sb = new StringBuilder(text);
-            foreach (var escapeChar in escapeChars)
-            {
-                sb.Replace(escapeChar, "\\" + escapeChar);
-            }
-            return sb.ToString();
+            return "Зверніть увагу на сильний вітер. Будь ласка, тримайтеся подалі від дерев та хитких конструкцій.";
+        }
+        if (humidity > 85)
+        {
+            return "Висока вологість, через це може відчуватися прохолодніше. Можливо, варто взяти додаткову кофтинку.";
         }
 
-        public async Task<(bool success, int offset)> GetTimezoneOffsetAsync(string city)
-        {
-            try
-            {
-                string url = $"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={_apiKey}";
-                var response = await _httpClient.GetStringAsync(url);
-                var json = JObject.Parse(response);
-                return (true, json["timezone"]!.Value<int>());
-            }
-            catch
-            {
-                return (false, 0);
-            }
-        }
-
-        public async Task<string?> GetCityNameByCoordsAsync(double latitude, double longitude)
-        {
-            try
-            {
-                string url = $"https://api.openweathermap.org/data/2.5/weather?lat={latitude}&lon={longitude}&appid={_apiKey}&units=metric&lang=ua";
-                var response = await _httpClient.GetStringAsync(url);
-                var json = JObject.Parse(response);
-                return json["name"]!.ToString();
-            }
-            catch
-            {
-                return null;
-            }
-        }
-        
-        private string CapitalizeFirstLetter(string input)
-        {
-            if (string.IsNullOrEmpty(input))
-                return string.Empty;
-            return char.ToUpper(input[0]) + input.Substring(1);
-        }
-        
-        private string ToTitleCase(string input)
-        {
-            // Виправлено для сумісності з різними культурами
-            return new CultureInfo("uk-UA").TextInfo.ToTitleCase(input);
-        }
+        return "Сьогодні сприятливі погодні умови. Бажаємо Вам приємно провести час!";
     }
 }

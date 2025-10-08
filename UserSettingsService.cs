@@ -1,7 +1,7 @@
-﻿using System.Collections.Generic;
+﻿// PetProjects/UserSettingsService.cs
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Threading.Tasks;
 using Newtonsoft.Json;
 
 namespace Stribog;
@@ -9,45 +9,43 @@ namespace Stribog;
 public class UserSettingsService
 {
     private readonly string _filePath;
-    private Dictionary<long, UserSetting> _userSettings;
 
-    public UserSettingsService(string filePath)
+    public UserSettingsService()
     {
-        _filePath = filePath;
-        _userSettings = LoadUserSettingsFromFile();
-    }
-
-    private Dictionary<long, UserSetting> LoadUserSettingsFromFile()
-    {
-        if (!File.Exists(_filePath))
+        string dataDirectory = Path.Combine(AppContext.BaseDirectory, "Data");
+        if (!Directory.Exists(dataDirectory))
         {
-            return new Dictionary<long, UserSetting>();
+            Directory.CreateDirectory(dataDirectory);
         }
+        _filePath = Path.Combine(dataDirectory, "usersettings.json");
+    }
+
+    public UserSetting GetUserSettings(long chatId)
+    {
+        if (!File.Exists(_filePath)) return new UserSetting { ChatId = chatId };
         var json = File.ReadAllText(_filePath);
-        return JsonConvert.DeserializeObject<Dictionary<long, UserSetting>>(json) ?? new Dictionary<long, UserSetting>();
+        var settings = JsonConvert.DeserializeObject<List<UserSetting>>(json) ?? new List<UserSetting>();
+        return settings.FirstOrDefault(s => s.ChatId == chatId) ?? new UserSetting { ChatId = chatId };
     }
 
-    public Task SetUserSettingAsync(long chatId, UserSetting setting)
+    public void SaveUserSettings(UserSetting settingToSave)
     {
-        _userSettings[chatId] = setting;
-        return SaveUserSettingsToFileAsync();
-    }
-
-    public Task<UserSetting?> GetUserSettingsAsync(long chatId)
-    {
-        _userSettings.TryGetValue(chatId, out var setting);
-        return Task.FromResult(setting);
-    }
-    
-    // ДОДАНО: Відсутній метод для отримання ID всіх користувачів
-    public Task<IEnumerable<long>> GetAllUserIdsAsync()
-    {
-        return Task.FromResult(_userSettings.Keys.AsEnumerable());
-    }
-
-    private Task SaveUserSettingsToFileAsync()
-    {
-        var json = JsonConvert.SerializeObject(_userSettings, Formatting.Indented);
-        return File.WriteAllTextAsync(_filePath, json);
+        var settings = new List<UserSetting>();
+        if (File.Exists(_filePath))
+        {
+            var json = File.ReadAllText(_filePath);
+            settings = JsonConvert.DeserializeObject<List<UserSetting>>(json) ?? new List<UserSetting>();
+        }
+        var existingSetting = settings.FirstOrDefault(s => s.ChatId == settingToSave.ChatId);
+        if (existingSetting != null)
+        {
+            existingSetting.City = settingToSave.City;
+        }
+        else
+        {
+            settings.Add(settingToSave);
+        }
+        var newJson = JsonConvert.SerializeObject(settings, Formatting.Indented);
+        File.WriteAllText(_filePath, newJson);
     }
 }
