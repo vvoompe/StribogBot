@@ -16,17 +16,22 @@ namespace Stribog
             
             if (string.IsNullOrEmpty(databaseUrl))
             {
-                throw new InvalidOperationException("DATABASE_URL not set");
+                throw new InvalidOperationException("DATABASE_URL не встановлено. Перевірте змінні оточення на Railway.");
             }
 
             _connectionString = BuildConnectionString(databaseUrl);
         }
 
-        private static string BuildConnectionString(string databaseUrl)
+        // Змінюємо метод на public static, щоб його можна було викликати з Program.cs
+        public static string BuildConnectionString(string databaseUrl)
         {
             try
             {
-                // Перетворюємо URL, що надається Railway, на стандартний рядок підключення Npgsql
+                if (string.IsNullOrEmpty(databaseUrl) || databaseUrl.StartsWith("${{"))
+                {
+                    throw new InvalidOperationException("DATABASE_URL має неправильний формат або не встановлено. Перевірте налаштування на Railway.");
+                }
+
                 var uri = new Uri(databaseUrl);
                 var userInfo = uri.UserInfo.Split(':');
 
@@ -37,15 +42,15 @@ namespace Stribog
                     Username = userInfo[0],
                     Password = userInfo[1],
                     Database = uri.AbsolutePath.TrimStart('/'),
-                    SslMode = SslMode.Require, // Обов'язково для Railway
-                    TrustServerCertificate = true // Довіряти сертифікату сервера
+                    SslMode = SslMode.Require,
+                    TrustServerCertificate = true
                 };
 
                 return builder.ConnectionString;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[DB ERROR] Помилка розбору DATABASE_URL: {ex.Message}");
+                Console.WriteLine($"[DB ERROR] Помилка розбору DATABASE_URL: '{databaseUrl}'. Повідомлення: {ex.Message}");
                 throw new InvalidOperationException($"Не вдалося розібрати DATABASE_URL.", ex);
             }
         }
