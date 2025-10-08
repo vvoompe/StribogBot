@@ -56,7 +56,7 @@ public static class UpdateHandlers
             "/start" => HandleStartCommand(botClient, message, cancellationToken),
             "/help" => HandleStartCommand(botClient, message, cancellationToken),
             "⛅️ Дізнатись погоду" => HandleWeatherCommand(botClient, message, cancellationToken),
-            "⚙️ Вказати регіон/місто" => HandleSetCityCommand(botClient, message, cancellationToken),
+            "⚙️ Вказати місто" => HandleSetCityCommand(botClient, message, cancellationToken),
             "📯 Розсилки" => HandleBroadcastCommand(botClient, message, cancellationToken),
             "/setdefault" => HandleSetDefaultCommand(botClient, message, cancellationToken),
             _ => HandleUnknownCommand(botClient, message, cancellationToken)
@@ -71,7 +71,7 @@ public static class UpdateHandlers
         return botClient.SendTextMessageAsync(
             chatId: message.Chat.Id,
             text: "Ласкаво просимо! Цей бот допоможе вам дізнатись погоду.\n\n" +
-                  "1. Натисніть *'⚙️ Вказати регіон/місто'*.\n" +
+                  "1. Натисніть *'⚙️ Вказати місто'*.\n" +
                   "2. Натисніть *'⛅️ Дізнатись погоду'*.",
             parseMode: ParseMode.Markdown,
             replyMarkup: GetMainMenu(),
@@ -85,7 +85,7 @@ public static class UpdateHandlers
 
         if (string.IsNullOrEmpty(city))
         {
-            await botClient.SendTextMessageAsync(chatId: message.Chat.Id, text: "Спочатку вкажіть регіон.", cancellationToken: cancellationToken);
+            await botClient.SendTextMessageAsync(chatId: message.Chat.Id, text: "Спочатку вкажіть місто.", cancellationToken: cancellationToken);
             return;
         }
 
@@ -100,7 +100,7 @@ public static class UpdateHandlers
     private static Task HandleSetCityCommand(ITelegramBotClient botClient, Message message, CancellationToken cancellationToken)
     {
         UserStates[message.Chat.Id] = UserState.AwaitingCity;
-        return botClient.SendTextMessageAsync(chatId: message.Chat.Id, text: "Введіть назву регіону/міста:", replyMarkup: new ReplyKeyboardRemove(), cancellationToken: cancellationToken);
+        return botClient.SendTextMessageAsync(chatId: message.Chat.Id, text: "Введіть назву міста:", replyMarkup: new ReplyKeyboardRemove(), cancellationToken: cancellationToken);
     }
 
     private static async Task HandleCityInput(ITelegramBotClient botClient, Message message, CancellationToken cancellationToken)
@@ -126,7 +126,7 @@ public static class UpdateHandlers
         }
         catch
         {
-            await botClient.SendTextMessageAsync(chatId: message.Chat.Id, text: $"Регіон/місто '{city}' не знайдено. Спробуйте ще раз.", cancellationToken: cancellationToken);
+            await botClient.SendTextMessageAsync(chatId: message.Chat.Id, text: $"Місто '{city}' не знайдено. Спробуйте ще раз.", cancellationToken: cancellationToken);
         }
     }
 
@@ -208,7 +208,7 @@ public static class UpdateHandlers
                 {
                     UserStates[chatId] = UserState.AwaitingBroadcastCity;
                     await botClient.AnswerCallbackQueryAsync(callback.Id);
-                    await botClient.SendTextMessageAsync(chatId, "Введіть регіон/місто, для якого буде відправлятися розсилка:", cancellationToken: cancellationToken);
+                    await botClient.SendTextMessageAsync(chatId, "Введіть місто, для якого буде відправлятися розсилка:", cancellationToken: cancellationToken);
                     break;
                 }
             case "broadcast_change_time":
@@ -222,7 +222,7 @@ public static class UpdateHandlers
                 {
                     var s = _userSettingsService.GetUserSettings(chatId);
                     var current = $"Розсилка: {(s.DailyWeatherBroadcast ? "Увімкнено" : "Вимкнено")}\n" +
-                                  $"Регіон/місто: {s.BroadcastCity ?? s.City ?? "не вказано"}\n" +
+                                  $"Місто: {s.BroadcastCity ?? s.City ?? "не вказано"}\n" +
                                   $"Час: {s.BroadcastTime ?? "не вказано"}\n" +
                                   $"TZ: {s.TimeZoneId ?? "не вказано"}";
                     await botClient.AnswerCallbackQueryAsync(callback.Id, "Поточні налаштування");
@@ -235,7 +235,7 @@ public static class UpdateHandlers
                     var cityForWeather = string.IsNullOrEmpty(s.BroadcastCity) ? s.City : s.BroadcastCity;
                     if (string.IsNullOrEmpty(cityForWeather))
                     {
-                        await botClient.AnswerCallbackQueryAsync(callback.Id, "Спочатку вкажіть регіон.");
+                        await botClient.AnswerCallbackQueryAsync(callback.Id, "Спочатку вкажіть місто.");
                         break;
                     }
                     string todayForecast = await _weatherService.GetTodayForecastAsync(cityForWeather);
@@ -252,7 +252,7 @@ public static class UpdateHandlers
                     var cityForWeather = string.IsNullOrEmpty(s.BroadcastCity) ? s.City : s.BroadcastCity;
                     if (string.IsNullOrEmpty(cityForWeather))
                     {
-                        await botClient.AnswerCallbackQueryAsync(callback.Id, "Спочатку вкажіть регіон.");
+                        await botClient.AnswerCallbackQueryAsync(callback.Id, "Спочатку вкажіть місто.");
                         break;
                     }
                     string fiveDay = await _weatherService.GetWeatherAsync(cityForWeather);
@@ -296,7 +296,7 @@ public static class UpdateHandlers
 
     private static ReplyKeyboardMarkup GetMainMenu() => new(new[]
     {
-        new KeyboardButton[] { "⛅️ Дізнатись погоду", "⚙️ Вказати регіон" , "📯 Розсилки" }
+        new KeyboardButton[] { "⛅️ Дізнатись погоду", "⚙️ Вказати місто" , "📯 Розсилки" }
     }) { ResizeKeyboard = true };
 
     // Інлайн-меню керування погодою
