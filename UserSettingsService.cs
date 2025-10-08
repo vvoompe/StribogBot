@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Dapper;
 using Npgsql;
+using System.Threading.Tasks;
 
 namespace Stribog
 {
@@ -16,20 +17,19 @@ namespace Stribog
             
             if (string.IsNullOrEmpty(databaseUrl))
             {
-                throw new InvalidOperationException("DATABASE_URL не встановлено. Перевірте змінні оточення на Railway.");
+                throw new InvalidOperationException("DATABASE_URL не встановлено.");
             }
 
             _connectionString = BuildConnectionString(databaseUrl);
         }
 
-        // Змінюємо метод на public static, щоб його можна було викликати з Program.cs
         public static string BuildConnectionString(string databaseUrl)
         {
             try
             {
                 if (string.IsNullOrEmpty(databaseUrl) || databaseUrl.StartsWith("${{"))
                 {
-                    throw new InvalidOperationException("DATABASE_URL має неправильний формат або не встановлено. Перевірте налаштування на Railway.");
+                    throw new InvalidOperationException("DATABASE_URL має неправильний формат або не встановлено.");
                 }
 
                 var uri = new Uri(databaseUrl);
@@ -57,58 +57,35 @@ namespace Stribog
 
         public UserSetting GetUserSettings(long chatId)
         {
-            try
-            {
-                using var conn = new NpgsqlConnection(_connectionString);
-                var result = conn.QueryFirstOrDefault<UserSetting>(
-                    "SELECT * FROM usersettings WHERE chatid = @chatId",
-                    new { chatId });
-                
-                return result ?? new UserSetting { ChatId = chatId };
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error getting user settings for {chatId}: {ex.Message}");
-                return new UserSetting { ChatId = chatId };
-            }
+            using var conn = new NpgsqlConnection(_connectionString);
+            var result = conn.QueryFirstOrDefault<UserSetting>(
+                "SELECT * FROM usersettings WHERE chatid = @chatId",
+                new { chatId });
+            
+            return result ?? new UserSetting { ChatId = chatId };
         }
 
         public void SaveUserSettings(UserSetting setting)
         {
-            try
-            {
-                using var conn = new NpgsqlConnection(_connectionString);
-                conn.Execute(@"
-                    INSERT INTO usersettings (chatid, city, dailyweatherbroadcast, broadcastcity, broadcasttime, timezoneid)
-                    VALUES (@ChatId, @City, @DailyWeatherBroadcast, @BroadcastCity, @BroadcastTime, @TimeZoneId)
-                    ON CONFLICT (chatid) DO UPDATE SET
-                        city = EXCLUDED.city,
-                        dailyweatherbroadcast = EXCLUDED.dailyweatherbroadcast,
-                        broadcastcity = EXCLUDED.broadcastcity,
-                        broadcasttime = EXCLUDED.broadcasttime,
-                        timezoneid = EXCLUDED.timezoneid,
-                        updatedat = CURRENT_TIMESTAMP;",
-                    setting);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error saving user settings for {setting.ChatId}: {ex.Message}");
-                throw;
-            }
+            using var conn = new NpgsqlConnection(_connectionString);
+            conn.Execute(@"
+                INSERT INTO usersettings (chatid, city, dailyweatherbroadcast, broadcastcity, broadcasttime, timezoneid, lastbroadcastsentutc)
+                VALUES (@ChatId, @City, @DailyWeatherBroadcast, @BroadcastCity, @BroadcastTime, @TimeZoneId, @LastBroadcastSentUtc)
+                ON CONFLICT (chatid) DO UPDATE SET
+                    city = EXCLUDED.city,
+                    dailyweatherbroadcast = EXCLUDED.dailyweatherbroadcast,
+                    broadcastcity = EXCLUDED.broadcastcity,
+                    broadcasttime = EXCLUDED.broadcasttime,
+                    timezoneid = EXCLUDED.timezoneid,
+                    lastbroadcastsentutc = EXCLUDED.lastbroadcastsentutc,
+                    updatedat = CURRENT_TIMESTAMP;",
+                setting);
         }
 
         public List<UserSetting> GetAllSettings()
         {
-            try
-            {
-                using var conn = new NpgsqlConnection(_connectionString);
-                return conn.Query<UserSetting>("SELECT * FROM usersettings WHERE dailyweatherbroadcast = TRUE").ToList();
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error getting all settings: {ex.Message}");
-                return new List<UserSetting>();
-            }
+            using var conn = new NpgsqlConnection(_connectionString);
+            return conn.Query<UserSetting>("SELECT * FROM usersettings WHERE dailyweatherbroadcast = TRUE").ToList();
         }
     }
 }
