@@ -4,7 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Telegram.Bot;
-using Stribog;
+using TimeZoneConverter;
 
 namespace Stribog
 {
@@ -13,7 +13,6 @@ namespace Stribog
         private readonly ITelegramBotClient _botClient;
         private readonly UserSettingsService _settingsService;
         private readonly WeatherService _weatherService;
-        // Словник для відстеження вже надісланих розсилок, щоб уникнути дублів
         private readonly Dictionary<long, DateTime> _lastBroadcastSent = new();
 
         public BroadcastScheduler(ITelegramBotClient botClient, UserSettingsService settingsService)
@@ -29,26 +28,36 @@ namespace Stribog
             {
                 try
                 {
-                    var allSettings = _settingsService.GetAllSettings();
-                    var now = DateTime.UtcNow; // Працюємо в UTC для універсальності
+                    var allSettings = _settingsService.GetAllSettings()
+                        .Where(s => s.DailyWeatherBroadcast && !string.IsNullOrEmpty(s.BroadcastTime));
 
                     foreach (var user in allSettings)
                     {
-                        // Пропускаємо, якщо розсилка вимкнена або не вказано час
-                        if (!user.DailyWeatherBroadcast || string.IsNullOrEmpty(user.BroadcastTime) || !TimeSpan.TryParse(user.BroadcastTime, out var broadcastTime))
+                        if (!TimeSpan.TryParse(user.BroadcastTime, out var localBroadcastTime))
                         {
                             continue;
                         }
 
-                        // TODO: В майбутньому тут можна додати логіку для перетворення часу з урахуванням TimeZoneId користувача
-                        // Зараз час перевіряється за UTC
-                        var todayBroadcastTimeUtc = now.Date + broadcastTime;
-
-                        // Перевіряємо, чи настав час для розсилки
-                        if (now >= todayBroadcastTimeUtc)
+                        // Отримуємо часовий пояс користувача, за замовчуванням - UTC
+                        TimeZoneInfo userTimeZone;
+                        try
                         {
-                            // Перевіряємо, чи ми вже надсилали розсилку цьому користувачу сьогодні
-                            if (!_lastBroadcastSent.TryGetValue(user.ChatId, out var lastSent) || lastSent.Date < now.Date)
+                            // Використовуємо TimeZoneConverter для сумісності між Windows та IANA ID
+                            userTimeZone = TZConvert.GetTimeZoneInfo(user.TimeZoneId ?? "UTC");
+                        }
+                        catch
+                        {
+                            userTimeZone = TimeZoneInfo.Utc; // Якщо вказано невірний ID, повертаємось до UTC
+                        }
+
+                        // Конвертуємо поточний час UTC в локальний час користувача
+                        var nowInUserTz = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, userTimeZone);
+                        
+                        // Перевіряємо, чи настав час для розсилки В ЛОКАЛЬНОМУ ЧАСІ користувача
+                        if (nowInUserTz.TimeOfDay >= localBroadcastTime)
+                        {
+                            // Перевіряємо, чи ми вже надсилали розсилку цьому користувачу СЬОГОДНІ за його локальним часом
+                            if (!_lastBroadcastSent.TryGetValue(user.ChatId, out var lastSent) || lastSent.Date < nowInUserTz.Date)
                             {
                                 var cityToUse = !string.IsNullOrEmpty(user.BroadcastCity) ? user.BroadcastCity : user.City;
                                 if (string.IsNullOrEmpty(cityToUse)) continue;
@@ -59,20 +68,18 @@ namespace Stribog
                                     text: $"*🔔 Ваша щоденна розсилка погоди:*\n\n{weatherInfo}",
                                     parseMode: Telegram.Bot.Types.Enums.ParseMode.Markdown,
                                     cancellationToken: cancellationToken);
-
-                                // Оновлюємо час останньої розсилки для цього користувача
-                                _lastBroadcastSent[user.ChatId] = now;
+                                
+                                // Оновлюємо час останньої розсилки, зберігаючи час UTC
+                                _lastBroadcastSent[user.ChatId] = DateTime.UtcNow;
                             }
                         }
                     }
                 }
                 catch (Exception ex)
                 {
-                    // Логування помилки, щоб бачити проблеми в роботі планувальника
-                    Console.WriteLine($"[SCHEDULER ERROR] Помилка в планувальнику розсилок: {ex.Message}");
+                    Console.WriteLine($"[SCHEDULER ERROR] {ex.Message}");
                 }
 
-                // Чекаємо одну хвилину до наступної перевірки
                 await Task.Delay(TimeSpan.FromMinutes(1), cancellationToken);
             }
         }

@@ -36,23 +36,41 @@ namespace Stribog
             var json = await response.Content.ReadAsStringAsync();
             var data = JObject.Parse(json);
 
-            // --- Виправлений та покращений парсинг даних ---
             var description = data.SelectToken("weather[0].description")?.ToString() ?? "Невідомо";
             var temp = data.SelectToken("main.temp")?.Value<double>() ?? 0.0;
             var feelsLike = data.SelectToken("main.feels_like")?.Value<double>() ?? 0.0;
             var humidity = data.SelectToken("main.humidity")?.Value<int>() ?? 0;
             var windSpeed = data.SelectToken("wind.speed")?.Value<double>() ?? 0.0;
+            var pressure = data.SelectToken("main.pressure")?.Value<int>() ?? 0;
+            var visibility = data.SelectToken("visibility")?.Value<int>() ?? 0;
+            var cloudiness = data.SelectToken("clouds.all")?.Value<int>() ?? 0;
+            
+            var timezoneOffset = data.SelectToken("timezone")?.Value<int>() ?? 0;
+            var sunriseUnix = data.SelectToken("sys.sunrise")?.Value<long>() ?? 0;
+            var sunsetUnix = data.SelectToken("sys.sunset")?.Value<long>() ?? 0;
+            
+            var sunrise = DateTimeOffset.FromUnixTimeSeconds(sunriseUnix).ToOffset(TimeSpan.FromSeconds(timezoneOffset));
+            var sunset = DateTimeOffset.FromUnixTimeSeconds(sunsetUnix).ToOffset(TimeSpan.FromSeconds(timezoneOffset));
+
             var cityName = data.SelectToken("name")?.ToString() ?? city;
             var country = data.SelectToken("sys.country")?.ToString() ?? "";
 
-            // --- Оновлене форматування повідомлення ---
             var sb = new StringBuilder();
             sb.AppendLine($"*Погода в місті {cityName}, {country}*");
+            sb.AppendLine($"_{DateTime.Now:dd MMMM, HH:mm}_");
             sb.AppendLine();
-            sb.AppendLine($"🔹 *Зараз:* {description}");
+            sb.AppendLine($"🔹 *Зараз:* {char.ToUpper(description[0]) + description.Substring(1)}");
             sb.AppendLine($"🌡️ *Температура:* {temp:+#.#;-#.#;0}°C (відчувається як {feelsLike:+#.#;-#.#;0}°C)");
+            sb.AppendLine();
+            sb.AppendLine("*Додаткові показники:*");
             sb.AppendLine($"💧 *Вологість:* {humidity}%");
             sb.AppendLine($"💨 *Вітер:* {windSpeed:0.0} м/с");
+            sb.AppendLine($"☁️ *Хмарність:* {cloudiness}%");
+            sb.AppendLine($"🧭 *Тиск:* {pressure} гПа");
+            sb.AppendLine($"👁️ *Видимість:* {visibility / 1000.0:0.0} км");
+            sb.AppendLine();
+            sb.AppendLine($"🌅 *Схід сонця:* {sunrise:HH:mm}");
+            sb.AppendLine($"🌇 *Захід сонця:* {sunset:HH:mm}");
             sb.AppendLine();
             sb.AppendLine($"💡 *Порада:* {GetWeatherAdvice(temp, humidity, windSpeed, description)}");
             sb.AppendLine();
@@ -75,88 +93,70 @@ namespace Stribog
             var offset = forecastData["city"]["timezone"].Value<int>();
 
             var sb = new StringBuilder();
-            sb.AppendLine($"{cityName}, {country}");
-            var headerDate = DateTime.Now.ToString("dd MMMM, dddd HH:mm", CultureInfo.CreateSpecificCulture("en-US"));
-            sb.AppendLine(headerDate);
+            sb.AppendLine($"*Прогноз на сьогодні для міста {cityName}, {country}*");
+            sb.AppendLine($"_{DateTime.Now:dd MMMM, dddd}_");
             sb.AppendLine();
 
             var list = forecastData["list"] as JArray;
             if (list != null)
             {
                 var nowCity = DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromSeconds(offset)).DateTime;
-                var today = new DateTime(nowCity.Year, nowCity.Month, nowCity.Day);
-
-                var windows = new Dictionary<string, string>();
-                foreach (var item in list)
+                var todayForecasts = list.Where(item =>
                 {
-                    var dt = item["dt"].Value<long>();
-                    var local = DateTimeOffset.FromUnixTimeSeconds(dt).ToOffset(TimeSpan.FromSeconds(offset)).DateTime;
-                    if (local.Date != today.Date) continue;
-
-                    int blockStartHour = (local.Hour / 2) * 2;
-                    var windowLabel = $"{blockStartHour:00}:00-{(blockStartHour + 2):00}:00";
-
-                    var desc = item["weather"][0]["description"].ToString();
-                    var pop = item["pop"]?.Value<double>() ?? 0;
-                    var emoji = GetWeatherEmoji(desc, pop);
-
-                    if (!windows.ContainsKey(windowLabel))
-                        windows[windowLabel] = $"{emoji} {desc}";
-                    else
-                        windows[windowLabel] = windows[windowLabel] + " " + $"{emoji} {desc}";
-                }
-
-                foreach (var w in windows.OrderBy(k => k.Key))
+                    var localTime = DateTimeOffset.FromUnixTimeSeconds(item["dt"].Value<long>()).ToOffset(TimeSpan.FromSeconds(offset)).DateTime;
+                    return localTime.Date == nowCity.Date;
+                });
+                
+                if (!todayForecasts.Any())
                 {
-                    sb.AppendLine($"{w.Key}: {w.Value}");
+                    sb.AppendLine("На жаль, детальний прогноз на сьогодні наразі недоступний.");
                 }
-
-                // Одна загальна порада на сьогодні
-                var todayTemp = list[0]["main"]["temp"].Value<double>();
-                var todayHumidity = list[0]["main"]["humidity"].Value<int>();
-                var todayWind = list[0]["wind"]["speed"].Value<double>();
-                var todayDesc = list[0]["weather"][0]["description"].ToString();
-                sb.AppendLine();
-                sb.AppendLine($"💡 Порада дня: {GetWeatherAdvice(todayTemp, todayHumidity, todayWind, todayDesc)}");
-                sb.AppendLine();
+                else
+                {
+                    foreach (var item in todayForecasts)
+                    {
+                        var localTime = DateTimeOffset.FromUnixTimeSeconds(item["dt"].Value<long>()).ToOffset(TimeSpan.FromSeconds(offset)).DateTime;
+                        var temp = item["main"]["temp"].Value<double>();
+                        var desc = item["weather"][0]["description"].ToString();
+                        var pop = item["pop"]?.Value<double>() ?? 0;
+                        var emoji = GetWeatherEmoji(desc, pop);
+                        
+                        sb.AppendLine($"*{localTime:HH:mm}* - {temp:+#.#;-#.#;0}°C, {emoji} {desc}");
+                    }
+                }
             }
 
+            sb.AppendLine();
             sb.AppendLine("_Гарного дня!_");
             return sb.ToString();
-        }
-
-        private string GetWindDirectionArrow(double deg)
-        {
-            string[] arrows = { "↑", "↗", "→", "↘", "↓", "↙", "←", "↖" };
-            int idx = (int)((deg / 45) + 0.5) % 8;
-            return arrows[idx];
         }
 
         private string GetWeatherEmoji(string description, double pop)
         {
             var baseDesc = description.ToLower();
             if (baseDesc.Contains("гроза")) return "⛈️";
-            if (pop > 0) return "🌧️";
-            if (baseDesc.Contains("дощ") || baseDesc.Contains("мряка")) return "🌧️";
+            if (pop > 0.1) return "🌧️"; // Збільшено поріг для дощу
+            if (baseDesc.Contains("дощ") || baseDesc.Contains("мряка")) return "💧";
             if (baseDesc.Contains("сніг")) return "❄️";
             if (baseDesc.Contains("хмар")) return "☁️";
-            if (baseDesc.Contains("ясн") || baseDesc.Contains("сон") || baseDesc.Contains("солн")) return "☀️";
+            if (baseDesc.Contains("мінлива")) return "⛅️";
+            if (baseDesc.Contains("ясно")) return "☀️";
             return "🌤️";
         }
 
         private string GetWeatherAdvice(double temp, int humidity, double windSpeed, string description)
         {
             if (description.Contains("гроза")) return "Будь ласка, будьте обережні. Радимо залишатися вдома під час грози.";
-            if (description.Contains("дощ") || description.Contains("мряка")) return "Парасолька потрібна сьогодні.";
-            if (description.Contains("сніг")) return "Одягніться тепло, взуття із протектором.";
+            if (description.Contains("дощ") || description.Contains("мряка")) return "Не забудьте парасольку!";
+            if (description.Contains("сніг")) return "Одягніться тепло, взуття має бути неслизьким.";
 
-            if (temp > 30) return "Сьогодні дуже спекотно. Пийте багато води.";
+            if (temp > 30) return "Сьогодні дуже спекотно. Пийте багато води та уникайте сонця опівдні.";
             if (temp > 22) return "Чудова тепла погода! Гарний день для прогулянок.";
-            if (temp < 0) return "Мороз! Одягайтесь тепліше.";
-            if (temp < 5) return "Прохолодно. Рекомендуємо тепло вдягнути.";
+            if (temp < 0) return "Мороз! Одягайтесь тепліше, не забувайте про шапку та рукавички.";
+            if (temp < 5) return "Прохолодно. Рекомендуємо вдягнути куртку.";
 
-            if (windSpeed > 12) return "Сильний вітер. Тримайтеся подалі від дерев.";
-            if (humidity > 85) return "Висока вологість. Можлива втома; пийте більше води.";
+            if (windSpeed > 12) return "Сильний вітер. Тримайтеся подалі від дерев та конструкцій, що хитаються.";
+            if (humidity > 85) return "Висока вологість. Може відчуватися задуха.";
 
             return "Сьогодні сприятливі погодні умови. Гарного дня!";
         }
