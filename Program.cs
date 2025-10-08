@@ -6,6 +6,15 @@ using System.Threading;
 var botToken = Environment.GetEnvironmentVariable("TELEGRAM_BOT_TOKEN");
 var adminChatId = Environment.GetEnvironmentVariable("ADMIN_CHAT_ID");
 var weatherApiKey = Environment.GetEnvironmentVariable("OPENWEATHERMAP_API_KEY");
+using (var conn = new Npgsql.NpgsqlConnection(
+           Environment.GetEnvironmentVariable("DATABASE_URL")))
+{
+    conn.Open();
+    var sql = File.ReadAllText("Migrations/01_create_usersettings.sql");
+    using var cmd = new Npgsql.NpgsqlCommand(sql, conn);
+    cmd.ExecuteNonQuery();
+}
+
 
 // --- 2) Перевірка змінних ---
 if (string.IsNullOrEmpty(botToken) || string.IsNullOrEmpty(weatherApiKey))
