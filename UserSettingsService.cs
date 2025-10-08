@@ -1,4 +1,4 @@
-﻿// PetProjects/UserSettingsService.cs
+﻿﻿// PetProjects/UserSettingsService.cs
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -39,13 +39,26 @@ public class UserSettingsService
         var existingSetting = settings.FirstOrDefault(s => s.ChatId == settingToSave.ChatId);
         if (existingSetting != null)
         {
-            existingSetting.City = settingToSave.City;
+            existingSetting.City = settingToSave.City ?? existingSetting.City;
+            existingSetting.BroadcastCity = settingToSave.BroadcastCity ?? existingSetting.BroadcastCity;
+            existingSetting.BroadcastTime = settingToSave.BroadcastTime ?? existingSetting.BroadcastTime;
+            existingSetting.DailyWeatherBroadcast = settingToSave.DailyWeatherBroadcast;
+            // Нове: TZ
+            existingSetting.TimeZoneId = settingToSave.TimeZoneId ?? existingSetting.TimeZoneId;
         }
         else
         {
             settings.Add(settingToSave);
         }
+
         var newJson = JsonConvert.SerializeObject(settings, Formatting.Indented);
         File.WriteAllText(_filePath, newJson);
+    }
+
+    public List<UserSetting> GetAllSettings()
+    {
+        if (!File.Exists(_filePath)) return new List<UserSetting>();
+        var json = File.ReadAllText(_filePath);
+        return JsonConvert.DeserializeObject<List<UserSetting>>(json) ?? new List<UserSetting>();
     }
 }

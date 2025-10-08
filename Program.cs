@@ -1,5 +1,6 @@
-﻿using Stribog;
+﻿﻿using Stribog;
 using Telegram.Bot;
+using System.Globalization;
 
 // --- 1. Отримання налаштувань зі змінних оточення ---
 var botToken = Environment.GetEnvironmentVariable("TELEGRAM_BOT_TOKEN");
@@ -45,4 +46,10 @@ if (!string.IsNullOrEmpty(adminChatId))
     }
 }
 
+// --- 5. Розсилка розкладу (планувальник) ---
+var settingsService = new UserSettingsService();
+var broadcastScheduler = new BroadcastScheduler(botClient, settingsService);
+_ = broadcastScheduler.RunAsync(cts.Token); // запускаємо у фоновому режимі
+
+// --- 6. Фонове очікування завершення програми ---
 await Task.Delay(-1, cts.Token);
